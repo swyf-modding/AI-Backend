@@ -1,0 +1,3 @@
+[submodule "vendor/ScamWYF.Modding.Core"]
+	path = vendor/ScamWYF.Modding.Core
+	url = git@github.com:swyf-modding/mod-lib.git
