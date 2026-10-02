@@ -3,7 +3,6 @@
 # ScamWYF.AiBackend
 
 ![license](https://img.shields.io/badge/license-MIT-blue)
-![last commit](https://img.shields.io/github/last-commit/swyf-modding/AI-Backend?label=last%20commit&color=blue)
 ![version](https://img.shields.io/badge/version-1.0.0-blue)
 ![game build](https://img.shields.io/badge/game-v82--playtest-blue)
 ![Unity](https://img.shields.io/badge/Unity-6000.3.10f1-blue)
