@@ -10,9 +10,9 @@ Part of a four-repo setup:
 
 | Repo | What it is |
 |---|---|
-| [scam-wyf-modding-lib](../scam-wyf-modding-lib) | Shared library: base class, patch coordinator, hotkeys, IMGUI host |
+| [scam-wyf-modding-lib](../scam-wyf-modding-lib) | Shared library: base class, menu, config, patch coordinator, hotkeys |
 | **scam-wyf-aibackend** (this one) | This mod |
-| [scam-wyf-modhandler](../scam-wyf-modhandler) | In-game list of installed mods, and the collision report |
+| [scam-wyf-modhandler](../scam-wyf-modhandler) | In-game list of installed plugin files |
 | [scam-wyf-setup](../scam-wyf-setup) | BepInEx, Doorstop and the corlib patches the game needs |
 
 Prerequisite: the game has to be loadable at all, which on this build means BepInEx plus the
@@ -47,14 +47,16 @@ says what it expected and what this build actually has instead of throwing.
 ```
 
 Roslyn runs directly; no .NET SDK needed. The game install is auto-detected, or set `SWYG_GAME_DIR`.
-The dll lands in `BepInEx\plugins`.
+The build puts this mod's dll in `BepInEx\plugins` and the shared library in `BepInEx\core`.
 
 ```powershell
 git submodule update --init --recursive    # first-time clone only
 ```
 
-The shared library is a submodule whose sources are compiled into this dll, so there is one file in
-`BepInEx\plugins` and no version of anything to keep in step.
+The library is a submodule built to its own dll rather than compiled into this one, because it owns the
+singletons — the hotkey table, the menu, the panel. Embedded, every mod would have had a private copy,
+and F1 would have opened two windows. Build both from one command; there is still nothing to keep in
+step by hand.
 
 ## Configure
 
@@ -71,6 +73,18 @@ ApiKey =
 [3 - Model]
 Model = llama3.1:8b            # required - the game asks for an OpenRouter model id
 ```
+
+### Or set it in game
+
+Press **F1** and open the **AI Backend** tab. Every setting above is there as a form, with the same
+comments as help text, and editing it writes straight back to the `.cfg`. The tab also shows what is
+actually in effect right now — endpoint, mode, model, provider, request and failure counts, and the
+last error — which is the thing worth having when a reply is not what you expected and you cannot
+tell which of six settings you got wrong.
+
+The file is also watched. Change `BaseUrl` or `Model` in a text editor while the game is running and
+the next request uses it, within about half a second. Switching `Mode` to or from `Passthrough`
+installs or removes the patch at that point, and the log says which happened.
 
 | Server | BaseUrl | Mode |
 |---|---|---|
@@ -138,8 +152,9 @@ nothing extra: the mod builds the reply from `content` only, so reasoning never 
 `MinMaxTokens` is a floor, not a replacement — it raises the game's 128 but leaves a higher
 `MaxTokensOverride` alone.
 
-Numeric settings are clamped to a workable range at load, so a hand-edited `Timeout = -1` is a line
-in the log rather than a mod that stops working.
+Numeric settings are clamped to a workable range at load and again after every config reload, and the
+corrected value is written back to the file — so a hand-edited `Timeout = -1` is a line in the log
+and a fix, rather than a mod that stops working every launch.
 
 ## Letting another mod take over
 
@@ -159,7 +174,27 @@ AiBackendApi.Register(new MyBackend());
 
 Most recently registered backend is asked first; declining falls through to the built-in router and
 then to the game's own backend. A routing bug never takes the game down — it logs and falls back to
-the stock path.
+the stock path. Registered backends are listed on the mod menu's **AI Backend** tab, so it is
+visible when a reply came from somewhere other than this mod's router.
+
+## The mod menu
+
+This mod has a tab in the menu the shared library owns, so it is reachable whichever mods are
+installed — the mod handler is not needed for it.
+
+| Service | Used for |
+|---|---|
+| `ScamMod` | identity, load failures logged instead of fatal, unload handled |
+| `ModMenu` | the **AI Backend** tab, and the default one if this mod registers nothing |
+| `ConfigEditor` | the settings form, generated from the config file itself |
+| `WatchConfig` | picking up an edit made in a text editor, without a restart |
+| `PatchCoordinator` | the router patch, and the collision report if another mod has taken it |
+| `GameBuild` | Unity version check on load, and resolving `MainMenuConnectionStatus` |
+
+The shared menu is drawn with UI Toolkit, the same stack the base game uses for its own menus, so
+the panel inherits the game's theme and fonts rather than looking like a debug overlay dropped on
+top of a real interface. See
+[the library README](../scam-wyf-modding-lib#the-ui--the-base-games-own-not-a-lookalike).
 
 ## The one build rule that matters
 
@@ -178,3 +213,7 @@ C# 7.3, no `.csproj`, no NuGet.
 
 BepInEx still initialises and writes `BepInEx\LogOutput.log`, so plugin loading and Harmony patching
 can be verified headlessly. A preloader crash lands in `preloader_*.log` in the game root.
+
+`-batchmode` loads no scene, so UI Toolkit has no themed `PanelSettings` to clone and the in-game
+menu reports itself unavailable. The router, the patch and hot config reload all still work
+headlessly; only the interface needs a real window.

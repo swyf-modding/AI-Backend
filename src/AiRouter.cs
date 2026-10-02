@@ -39,8 +39,11 @@ namespace ScamWYF.AiBackend
             var source = new UniTaskCompletionSource<JObject>();
             if (instance == null)
             {
-                source.TrySetException(new InvalidOperationException(
-                    "ScamWYF.AiBackend router was never initialized."));
+                var problem = new InvalidOperationException(
+                    "ScamWYF.AiBackend router was never initialized.");
+                if (log != null) log.LogError(problem.Message);
+                Plugin.RecordFailure(problem.Message);
+                source.TrySetException(problem);
                 return source.Task;
             }
 
@@ -162,12 +165,19 @@ namespace ScamWYF.AiBackend
                 }
 
                 if (cancelled) { source.TrySetCanceled(cancellationToken); yield break; }
-                if (parsed != null) { source.TrySetResult(parsed); yield break; }
+                if (parsed != null)
+                        {
+                            Plugin.RecordSuccess(url);
+                            source.TrySetResult(parsed);
+                            yield break;
+                        }
                 if (!retryable) break;
             }
 
-            source.TrySetException(lastError ?? new InvalidOperationException(
-                "The AI request failed and no error was recorded."));
+            var failure = lastError ?? new InvalidOperationException(
+                "The AI request failed and no error was recorded.");
+            Plugin.RecordFailure(failure.Message);
+            source.TrySetException(failure);
         }
 
         private void ApplyExtraHeaders(UnityWebRequest request)

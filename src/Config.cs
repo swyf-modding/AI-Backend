@@ -1,3 +1,4 @@
+using System;
 using BepInEx.Configuration;
 using ScamWYF.Modding.Core;
 
@@ -154,15 +155,57 @@ namespace ScamWYF.AiBackend
         /// </summary>
         /// <remarks>
         /// This config file is meant to be edited in a text editor, so it is going to end up with a
-        /// timeout of -1 or an attempt count of 900 at some point. Clamping once at load means the
-        /// request path only ever sees sane numbers.
+        /// timeout of -1 or an attempt count of 900 at some point. Clamping means the request path
+        /// only ever sees sane numbers.
+        ///
+        /// Called at load and again after every reload, because the values are re-read from a file
+        /// that can be edited underneath the game. Only the clamped values are written back, so a
+        /// typo is corrected in the file rather than silently overridden in memory - the file stays
+        /// the thing a person edits.
         /// </remarks>
         public void ApplyLimits(ModSettings settings)
         {
-            TimeoutSeconds.Value = settings.Int(TimeoutSeconds, 1, 3600);
-            MaxAttempts.Value = settings.Int(MaxAttempts, 1, 10);
-            MaxTokensOverride.Value = settings.Int(MaxTokensOverride, 0, 1000000);
-            MinMaxTokens.Value = settings.Int(MinMaxTokens, 0, 1000000);
+            Clamp(TimeoutSeconds, settings.Int(TimeoutSeconds, 1, 3600));
+            Clamp(MaxAttempts, settings.Int(MaxAttempts, 1, 10));
+            Clamp(MaxTokensOverride, settings.Int(MaxTokensOverride, 0, 1000000));
+            Clamp(MinMaxTokens, settings.Int(MinMaxTokens, 0, 1000000));
+
+            // A temperature or top_p left negative means "use the game's value", so those are bounds,
+            // not clamps - there is nothing to correct.
+            TemperatureOverride.Value = settings.Float(TemperatureOverride, -1f, 2f);
+            TopPOverride.Value = settings.Float(TopPOverride, -1f, 1f);
+        }
+
+        private static void Clamp<T>(BepInEx.Configuration.ConfigEntry<T> entry, T value) where T : IComparable
+        {
+            try
+            {
+                if (entry.Value.CompareTo(value) == 0) return;
+                entry.Value = value;
+            }
+            catch (Exception)
+            {
+                // The settings object has already complained about an unreadable value; there is
+                // nothing useful to add by trying to write one back over it.
+            }
+        }
+
+        /// <summary>
+        /// Log the settings that are actually in effect. Called after a reload, so somebody editing the
+        /// file can see in the log exactly which values the mod picked up - which is the question when a
+        /// change "did nothing".
+        /// </summary>
+        public void Describe(BepInEx.Logging.ManualLogSource log)
+        {
+            if (log == null) return;
+
+            log.LogInfo(string.Format(
+                "In effect: mode {0}, endpoint {1}, model '{2}', timeout {3}s, {4} attempt(s).",
+                Mode.Value,
+                string.IsNullOrEmpty(BaseUrl.Value.Trim()) ? "<not set>" : BaseUrl.Value.Trim(),
+                string.IsNullOrEmpty(Model.Value.Trim()) ? "<whatever the game asks for>" : Model.Value.Trim(),
+                TimeoutSeconds.Value,
+                MaxAttempts.Value));
         }
 
         /// <summary>
