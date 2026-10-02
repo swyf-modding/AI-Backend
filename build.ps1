@@ -56,6 +56,7 @@ $buildArgs = @{
     OutDir  = (Join-Path $PSScriptRoot 'bin')
     Refs    = @(
         (Join-Path $managed 'UnityEngine.UnityWebRequestModule.dll')
+        (Join-Path $managed 'UnityEngine.UIElementsModule.dll')
         (Join-Path $managed 'Newtonsoft.Json.dll')
         (Join-Path $managed 'UniTask.dll')
         (Join-Path $managed 'Assembly-CSharp.dll')

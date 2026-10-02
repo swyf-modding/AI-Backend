@@ -165,6 +165,18 @@ namespace ScamWYF.AiBackend
                 var error = raw["error"];
                 if (error != null)
                     throw new InvalidOperationException("The AI server returned an error: " + error.ToString(Formatting.None));
+
+                // By far the most common cause with a reasoning model, and it looks identical to a
+                // broken server otherwise: the whole budget went into "reasoning" and the answer
+                // was never written. Name it, or this costs an hour of log-reading every time.
+                if (IsTokenStarved(raw))
+                    throw new InvalidOperationException(
+                        "The model spent its entire token budget thinking and returned no reply " +
+                        "(finish_reason \"length\"). Reasoning models need far more than the " +
+                        cfg.GameMaxTokens() + " the game asks for. Set MinMaxTokens in " +
+                        "BepInEx\\config\\com.community.scamwyf.aibackend.cfg to 2048 or more. " +
+                        "Reasoning so far: " + Truncate(ReadReasoning(raw), 400));
+
                 throw new InvalidOperationException(
                     "The AI server's response had no assistant text. Body: " + Truncate(raw.ToString(Formatting.None), 600));
             }
@@ -228,6 +240,32 @@ namespace ScamWYF.AiBackend
         {
             if (token == null || token.Type == JTokenType.Null) return true;
             return token.Type == JTokenType.String && string.IsNullOrEmpty(token.Value<string>());
+        }
+
+        /// <summary>
+        /// True when the reply was cut off by the token limit having produced reasoning but no
+        /// answer. Not the same as a refusal, and not the same as a server error.
+        /// </summary>
+        private static bool IsTokenStarved(JObject raw)
+        {
+            if (!(raw["choices"] is JArray choices) || choices.Count == 0) return false;
+
+            var finish = (string)choices[0]["finish_reason"];
+            if (!string.Equals(finish, "length", StringComparison.Ordinal)) return false;
+
+            // Reasoning in a field the mod does not otherwise understand is still evidence the
+            // model was thinking, which is what makes this a budget problem rather than a broken
+            // server. A bare "length" with nothing to show for it gets the generic message.
+            var message = choices[0]["message"];
+            return !IsEmpty(message?["reasoning"]) || !IsEmpty(message?["reasoning_content"]);
+        }
+
+        private static string ReadReasoning(JObject raw)
+        {
+            if (!(raw["choices"] is JArray choices) || choices.Count == 0) return "";
+            var message = choices[0]["message"];
+            var reasoning = message?["reasoning"] ?? message?["reasoning_content"];
+            return reasoning == null ? "" : reasoning.ToString(Formatting.None);
         }
 
         public static string StripThinking(string text)

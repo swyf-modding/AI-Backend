@@ -94,15 +94,49 @@ Model = llama3.1:8b            # required - the game asks for an OpenRouter mode
   that ran out of tokens.
 * **response shape** — Ollama's native reply is converted back to OpenAI shape.
 
-### If you use a reasoning model
+## What the main menu shows
 
-The game asks for **128 max_tokens** per caller turn. A thinking model will spend all of it
-reasoning and return nothing usable.
+The main menu asks the hosted backend how many AI credits are left and prints whatever it is told,
+whether or not anything is answering. With a custom backend those credits mean nothing, so the mod
+rewrites that readout:
+
+* the **AI status** line reads `AI BACKEND: CUSTOM BACKEND`, in the healthy colour
+* the **credits-depleted popup** is replaced with the endpoint, the model and the provider that are
+  actually in use
+
+Everything else the menu warns about — Steam offline, sign-in failed — is still true of the game, so
+it is left alone.
+
+Provider is worked out from `BaseUrl` (Ollama, LM Studio, OpenAI, OpenRouter, Groq, llama.cpp, vLLM
+and so on are recognised; anything else falls back to the host name). Set it yourself if you like:
 
 ```ini
-MinMaxTokens = 1024
+ProviderName = Ollama
+```
+
+### If you use a reasoning model
+
+The game asks for **128 max_tokens** per caller turn. A thinking model spends all of it reasoning
+and returns nothing usable — `"content": null`, `"finish_reason": "length"` — so the game throws the
+turn away and the caller says *"Sorry, what were you saying"*.
+
+```ini
+MinMaxTokens = 2048
 StripThinkTags = true
 ```
+
+The log names this case explicitly rather than reporting a generic parse failure:
+
+```
+The model spent its entire token budget thinking and returned no reply (finish_reason "length").
+Reasoning models need far more than the token limit the game asks for. Set MinMaxTokens in
+BepInEx\config\com.community.scamwyf.aibackend.cfg to 2048 or more.
+```
+
+Models that reason in a `reasoning` or `reasoning_content` field rather than `<think>` tags need
+nothing extra: the mod builds the reply from `content` only, so reasoning never reaches the game.
+`MinMaxTokens` is a floor, not a replacement — it raises the game's 128 but leaves a higher
+`MaxTokensOverride` alone.
 
 Numeric settings are clamped to a workable range at load, so a hand-edited `Timeout = -1` is a line
 in the log rather than a mod that stops working.

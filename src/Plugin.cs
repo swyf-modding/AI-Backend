@@ -112,6 +112,9 @@ namespace ScamWYF.AiBackend
                 Cfg.BaseUrl.Value,
                 Cfg.Mode.Value,
                 string.IsNullOrEmpty(Cfg.Model.Value.Trim()) ? "<whatever the game asks for>" : Cfg.Model.Value.Trim()));
+
+            // Only once the router is live: the menu must not advertise a backend that isn't there.
+            MenuStatus.TryInstall(this, Cfg);
         }
 
         /// <summary>

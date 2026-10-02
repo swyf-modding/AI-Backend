@@ -40,6 +40,7 @@ namespace ScamWYF.AiBackend
         public readonly ConfigEntry<bool> AllowInvalidCertificates;
 
         public readonly ConfigEntry<string> Model;
+        public readonly ConfigEntry<string> ProviderName;
         public readonly ConfigEntry<int> MaxTokensOverride;
         public readonly ConfigEntry<int> MinMaxTokens;
         public readonly ConfigEntry<float> TemperatureOverride;
@@ -103,6 +104,12 @@ namespace ScamWYF.AiBackend
                 "id such as google/gemini-2.5-flash-lite and will not exist on your server.\n" +
                 "Examples: llama3.1:8b, qwen3:14b, gpt-4o-mini.");
 
+            ProviderName = file.Bind("3 - Model", "ProviderName", "",
+                "Name of the provider, shown in the main menu's AI status readout.\n" +
+                "Leave empty to work it out from BaseUrl: Ollama, LM Studio, OpenAI, OpenRouter and\n" +
+                "so on are recognised, anything else falls back to the host name.\n" +
+                "Examples: Ollama, OpenRouter, LM Studio, vLLM.");
+
             MaxTokensOverride = file.Bind("3 - Model", "MaxTokensOverride", 0,
                 "Replace the game's token limit with this. 0 keeps the game's value.");
 
@@ -156,6 +163,17 @@ namespace ScamWYF.AiBackend
             MaxAttempts.Value = settings.Int(MaxAttempts, 1, 10);
             MaxTokensOverride.Value = settings.Int(MaxTokensOverride, 0, 1000000);
             MinMaxTokens.Value = settings.Int(MinMaxTokens, 0, 1000000);
+        }
+
+        /// <summary>
+        /// The token limit a caller turn ends up with, for error messages. Resolved the same way
+        /// Translator resolves it, so "raise this" and "this is what you have" agree.
+        /// </summary>
+        public string GameMaxTokens()
+        {
+            var limit = MinMaxTokens.Value;
+            if (MaxTokensOverride.Value > 0) limit = MaxTokensOverride.Value;
+            return limit > 0 ? limit + " tokens" : "token limit";
         }
     }
 }
