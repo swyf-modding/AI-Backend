@@ -8,12 +8,18 @@
         .\build.ps1
         .\build.ps1 -CscDll C:\path\to\roslyn\csc.dll
         .\build.ps1 -GameDir "C:\...\steamapps\common\Scam With Your Friends"
+        .\build.ps1 -Test
+
+    -Test runs the library's tests as well: the behaviour tests and the API surface check. It is the
+    flag a continuous build wants, since a mod that compiles against a library surface it does not
+    actually use can still fail to run.
 #>
 [CmdletBinding()]
 param(
     [string]$GameDir,
     [string]$CscDll,
-    [switch]$NoCopy
+    [switch]$NoCopy,
+    [switch]$Test
 )
 
 $ErrorActionPreference = 'Stop'
@@ -66,6 +72,7 @@ $buildArgs = @{
 if ($GameDir)   { $buildArgs.GameDir = $GameDir }
 if ($CscDll)    { $buildArgs.CscDll = $CscDll }
 if ($NoCopy)    { $buildArgs.NoCopy = $true }
+if ($Test)      { $buildArgs.Test = $true }
 
 & $lib @buildArgs
 
