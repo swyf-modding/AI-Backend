@@ -2,6 +2,7 @@
 
 # ScamWYF.AiBackend
 
+![license](https://img.shields.io/badge/license-MIT-blue)
 ![last commit](https://img.shields.io/github/last-commit/swyf-modding/AI-Backend?label=last%20commit&color=blue)
 ![version](https://img.shields.io/badge/version-1.0.0-blue)
 ![game build](https://img.shields.io/badge/game-v82--playtest-blue)
@@ -37,6 +38,7 @@
 - [Project Structure](#project-structure)
 - [Continuous Builds](#continuous-builds)
 - [Security](#security)
+- [License](#license)
 - [Related Projects](#related-projects)
 
 ---
@@ -335,6 +337,15 @@ SWYM_RUNNER = self-hosted, windows, scamwyf
 Please do not publish suspected vulnerabilities or private game data in a public issue, and do not paste
 `BepInEx\LogOutput.log` contents in public: **this mod logs your configured endpoint and model, and the
 `ApiKey` is in your `.cfg`.** Share a redacted log if you need to report a problem.
+
+---
+
+## License
+
+MIT — Copyright © 2026 Ras_rap. See [LICENSE](LICENSE).
+
+The shared library this mod builds against is a separate work under its own licence, included here as a
+submodule.
 
 ---
 
