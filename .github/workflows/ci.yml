@@ -50,9 +50,20 @@ jobs:
   build:
     name: Build against the game
     runs-on: ${{ vars.SWYM_RUNNER || 'self-hosted' }}
-    if: >-
-      github.event_name != 'pull_request'
-      && (github.ref == 'refs/heads/main' || github.event_name == 'workflow_dispatch')
+    # Manual trigger only, and deliberately so. This job needs a machine with the game installed, and a
+    # self-hosted job with no runner registered does not fail - it queues, and stays queued until GitHub
+    # cancels it 24 hours later. Triggering it on every push to main therefore left a stuck job and a red
+    # build on each one.
+    #
+    # library-tests above still runs on every push and pull request, on a hosted runner, and that is the
+    # tier that catches logic a compile cannot. This one is the tier that has to happen where the game is:
+    # run it from the Actions tab when you want to know the mod compiles against the real assemblies.
+    #
+    # A pull request from a fork has no game either, which is a second reason it is not automatic.
+    #
+    # If a runner is ever registered, add `github.ref == 'refs/heads/main' ||` back to the condition and
+    # set SWYM_RUNNER to its labels. Nothing else needs to change.
+    if: github.event_name == 'workflow_dispatch'
 
     steps:
       - uses: actions/checkout@v4
