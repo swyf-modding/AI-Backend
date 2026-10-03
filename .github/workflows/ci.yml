@@ -1,25 +1,26 @@
 name: ci
 
-# Builds this mod and the shared library.
+# Runs the shared library's behaviour tests.
 #
-# The mod compiles against the game's own assemblies, so a hosted runner cannot build it: no Steam, and
-# the game is not ours to redistribute. Two tiers:
+# That is the whole of it, and the limit is deliberate. This mod compiles against the game's own
+# assemblies, so a hosted runner cannot build it: there is no Steam, and the game is not ours to
+# redistribute. A hosted runner therefore has nothing to offer beyond the tests, which use nothing but
+# the BCL and catch logic a compile cannot - so those run here, and the compile happens on the machine
+# that has the game.
 #
-#   library-tests - always runs. The library's behaviour tests use nothing but the BCL, so they work
-#                   anywhere and catch logic a compile cannot.
-#   build         - runs where the game is, i.e. a self-hosted runner with the game installed, or by
-#                   hand. It also runs the library's API surface check, which is the tier that catches
-#                   this mod calling a library member that no longer exists - the failure a compile
-#                   alone would not, since the reference is to the dll just built.
+# The alternative was a second, self-hosted job for the real build. There is not one, and that is on
+# purpose: a self-hosted job with no runner registered does not fail, it queues and sits until GitHub
+# cancels it 24 hours later. Every push to main left a stuck job and a red build, and the "Run workflow"
+# button was a trap that did the same thing on demand.
 #
-# The build tier is skipped rather than failed when it cannot run, and says so, so a green run never
-# quietly means "nothing was compiled".
+# So the compile, the API surface check and the release are all manual, and documented in RELEASING.md.
+# The check that matters before a release - build.ps1 -Test, which runs the API surface check - is one
+# command and runs against your own install, where the game is present.
 
 on:
   push:
     branches: [main]
   pull_request:
-  workflow_dispatch:
 
 jobs:
   library-tests:
@@ -46,60 +47,3 @@ jobs:
         run: |
           cp src/ui/WindowGeometry.cs tests/window/WindowGeometry.cs
           dotnet run --project tests/window/WindowGeometryTests.csproj
-
-  build:
-    name: Build against the game
-    runs-on: ${{ vars.SWYM_RUNNER || 'self-hosted' }}
-    # Manual trigger only, and deliberately so. This job needs a machine with the game installed, and a
-    # self-hosted job with no runner registered does not fail - it queues, and stays queued until GitHub
-    # cancels it 24 hours later. Triggering it on every push to main therefore left a stuck job and a red
-    # build on each one.
-    #
-    # library-tests above still runs on every push and pull request, on a hosted runner, and that is the
-    # tier that catches logic a compile cannot. This one is the tier that has to happen where the game is:
-    # run it from the Actions tab when you want to know the mod compiles against the real assemblies.
-    #
-    # A pull request from a fork has no game either, which is a second reason it is not automatic.
-    #
-    # If a runner is ever registered, add `github.ref == 'refs/heads/main' ||` back to the condition and
-    # set SWYM_RUNNER to its labels. Nothing else needs to change.
-    if: github.event_name == 'workflow_dispatch'
-
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          submodules: true
-
-      - name: Look for the game
-        id: game
-        shell: pwsh
-        run: |
-          $dir = $env:SWYG_GAME_DIR
-          if (-not $dir) {
-            $dir = "$env:ProgramFiles(x86)\Steam\steamapps\common\Scam With Your Friends Playtest"
-          }
-          if (-not (Test-Path "$dir\Scam With Your Friends_Data\Managed\mscorlib.dll")) {
-            Write-Host "::notice::No game at $dir - skipping the build tier. The library tests still ran."
-            Write-Host "::notice::On a self-hosted runner, install the game and set SWYG_GAME_DIR."
-            'found=false' >> $env:GITHUB_OUTPUT
-            exit 0
-          }
-          "SWYG_GAME_DIR=$dir" >> $env:GITHUB_ENV
-          'found=true' >> $env:GITHUB_OUTPUT
-          Write-Host "game: $dir"
-
-      - name: Build and test
-        if: steps.game.outputs.found == 'true'
-        shell: pwsh
-        run: .\build.ps1 -NoCopy -Test
-
-      # Both dlls, because BepInEx needs the library in core and this one in plugins. Shipping only the
-      # mod would produce an install that loads nothing and says nothing useful about why.
-      - uses: actions/upload-artifact@v4
-        if: steps.game.outputs.found == 'true'
-        with:
-          name: ScamWYF.AiBackend
-          path: |
-            bin/ScamWYF.AiBackend.dll
-            vendor/ScamWYF.Modding.Core/bin/ScamWYF.Modding.Core.dll
-          if-no-files-found: error

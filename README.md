@@ -334,20 +334,26 @@ real interface.
 
 ## Continuous Builds
 
-[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs on every push and pull request, in two
-tiers, because the build compiles against the game's assemblies and those are not ours to redistribute:
+[`.github/workflows/ci.yml`](.github/workflows/ci.yml) runs the shared library's behaviour tests on
+every push and pull request, on a hosted runner. That is all it runs, and the limit is deliberate.
 
-| Job | Runner | What |
+The mod compiles against the game's own assemblies and those are not ours to redistribute, so a hosted
+runner cannot build it. So:
+
+| | Where | What |
 |---|---|---|
-| `library-tests` | hosted, any OS | the library's behaviour tests — pure BCL, no game |
-| `build` | self-hosted with the game, or by hand | the real compile, the API check, both dlls as an artefact |
+| behaviour tests | CI, hosted | pure BCL, no game — logic a compile cannot catch |
+| the build | your machine | the real compile, and the API surface check |
 
-`build` skips itself with a notice when there is no game rather than failing, so a green run never
-quietly means "nothing was compiled". To use a labelled runner, set a repository variable:
+The API surface check is the tier that matters here: this mod compiles perfectly well against a library
+surface it does not actually use, and then fails at runtime. It runs before every release, as part of
+`build.ps1 -Test`.
 
-```text
-SWYM_RUNNER = self-hosted, windows, scamwyf
-```
+There was a self-hosted CI job for this once. It is gone because a self-hosted job with no runner
+registered does not fail — it queues, and sits there until GitHub cancels it 24 hours later, so every
+push to `main` left a stuck red job and the "Run workflow" button was a trap that did the same on demand.
+
+Releases are published by hand; see [RELEASING.md](RELEASING.md).
 
 ---
 
