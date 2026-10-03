@@ -18,6 +18,9 @@
 param(
     [string]$GameDir,
     [string]$CscDll,
+    # Stamp this version instead of reading the nearest tag. For a build from a source archive with
+    # no .git, and for reproducing a release from a commit that has since moved.
+    [string]$Version,
     [switch]$NoCopy,
     [switch]$Test
 )
@@ -56,10 +59,15 @@ if (-not $managed) {
     throw "Could not find the game install. Pass -GameDir, or set SWYG_GAME_DIR."
 }
 
+# The version comes from this repository's tags, not the submodule's, which is why it is resolved here
+# and handed down rather than left to the library to work out for itself.
+. (Join-Path $PSScriptRoot 'vendor\ScamWYF.Modding.Core\Version.ps1')
+
 $buildArgs = @{
     Project = 'ScamWYF.AiBackend'
     Sources = @((Join-Path $PSScriptRoot 'src'))
     OutDir  = (Join-Path $PSScriptRoot 'bin')
+    BuildVersion = (Resolve-BuildVersion -Path $PSScriptRoot -Explicit $Version)
     Refs    = @(
         (Join-Path $managed 'UnityEngine.UnityWebRequestModule.dll')
         (Join-Path $managed 'UnityEngine.UIElementsModule.dll')

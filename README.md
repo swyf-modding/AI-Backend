@@ -3,7 +3,7 @@
 # ScamWYF.AiBackend
 
 ![license](https://img.shields.io/badge/license-MIT-blue)
-![version](https://img.shields.io/badge/version-1.0.0-blue)
+![version](https://img.shields.io/github/v/release/swyf-modding/AI-Backend?label=version)
 ![game build](https://img.shields.io/badge/game-v82--playtest-blue)
 ![Unity](https://img.shields.io/badge/Unity-6000.3.10f1-blue)
 
@@ -79,13 +79,13 @@ This project is not affiliated with or endorsed by the developers or publisher o
 - A legally installed copy of **Scam With Your Friends**, with the build listed under
   [Compatibility](#compatibility)
 - BepInEx plus the unstripped corlib override. This game ships a stripped `mscorlib` that BepInEx cannot
-  start without — [Setup](../Setup) installs both
-- [ScamWYF.Modding.Core](../mod-lib), which owns the menu this mod's settings appear in
+  start without — [Setup](https://github.com/swyf-modding/Setup) installs both
+- [ScamWYF.Modding.Core](https://github.com/swyf-modding/mod-lib), which owns the menu this mod's settings appear in
 - An LLM endpoint reachable from this machine
 
 ### Installation
 
-1. Install BepInEx and the corlib override with [Setup](../Setup).
+1. Install BepInEx and the corlib override with [Setup](https://github.com/swyf-modding/Setup).
 2. Copy `ScamWYF.AiBackend.dll` into `BepInEx\plugins`.
 3. Copy `ScamWYF.Modding.Core.dll` into `BepInEx\core`, if it is not already there.
 4. Launch the game once so BepInEx writes its config, then set `Model` and `BaseUrl` in
@@ -107,6 +107,25 @@ first and compiles this mod against the dll it just produced, so the reference i
 
 Roslyn runs directly; no .NET SDK is needed to build. The game install is auto-detected, or set
 `SWYG_GAME_DIR`.
+
+#### Versioning
+
+`build.ps1` reads the nearest git tag and stamps it into the dll. Nothing to edit by hand:
+
+| | |
+|---|---|
+| `AssemblyVersion` | `1.2.3` — numeric, because the CLR rejects a prerelease here |
+| `AssemblyInformationalVersion` | `1.2.3+g0a1b2c3` — what Explorer shows |
+| `[BepInPlugin]` version | the same string, which is what the launcher's Mods tab reads |
+
+That last row is why it is generated rather than typed. It used to be a `"1.0.0"` literal in the
+source: correct on the first release, silently wrong on every release after it, and shown to players
+by the launcher's Mods tab. It is a `const` because `[BepInPlugin]`'s arguments must be compile-time
+constants. See [`Version.ps1`](https://github.com/swyf-modding/mod-lib/blob/main/Version.ps1), which
+the mod's `build.ps1` and the library share.
+
+A commit past the tag adds `+3.g0a1b2c3`, a prerelease tag keeps its name, and an uncommitted tree is
+marked `.dirty` and warned about. `-Version` stamps one explicitly, for a build from a source archive.
 
 ### Configuration
 
@@ -288,11 +307,12 @@ from somewhere other than this mod's router.
 
 ```text
 src/
-|-- Plugin.cs          Load, patch installation, menu tab, reload handling
+|-- Plugin.cs          Load, patch installation, menu tab, reload handling.
+|                      Also IChatBackend and AiBackendApi, the surface other mods use
 |-- Config.cs          Bound settings, ranges, clamping
-|-- AiRouter.cs        The request/response rewriting
+|-- AiRouter.cs        The HTTP call itself: timeout, retry on 408/429/5xx, backoff
+|-- Translator.cs      Request and response rewriting: schema handling, thinking tags, Ollama's native shape
 |-- MenuStatus.cs      The main menu's AI status line and popup
-`-- AiBackendApi.cs    The registration surface other mods use
 build.ps1              Wraps the shared library's build script
 vendor/                The shared library, as a submodule
 ```
@@ -352,7 +372,7 @@ submodule.
 
 | Project | What it is |
 |---|---|
-| [mod-lib](../mod-lib) | Shared library: base class, menu, config editor, hot reload, patch coordinator |
-| [Setup](../Setup) | Installs BepInEx, the corlib override, and the vtable patches this game needs |
-| [Launcher](../Launcher) | Installs, launches, and manages mods from outside the game |
-| [Mod-Handler](../Mod-Handler) | The in-game **Plugins** tab — turn mods off without leaving a session |
+| [mod-lib](https://github.com/swyf-modding/mod-lib) | Shared library: base class, menu, config editor, hot reload, patch coordinator |
+| [Setup](https://github.com/swyf-modding/Setup) | Installs BepInEx, the corlib override, and the vtable patches this game needs |
+| [Launcher](https://github.com/swyf-modding/Launcher) | Installs, launches, and manages mods from outside the game |
+| [Mod-Handler](https://github.com/swyf-modding/Mod-Handler) | The in-game **Plugins** tab — turn mods off without leaving a session |

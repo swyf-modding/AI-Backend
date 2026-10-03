@@ -4,7 +4,7 @@ obj/
 
 # Only build artefacts. Nothing that ships with the game or with BepInEx belongs here:
 # the game's assemblies, the unstripped BCL and the patched copies of it are not ours to
-# redistribute, and everyone generates their own with the scripts in scam-wyf-setup.
+# redistribute, and everyone generates their own with the scripts in Setup.
 *.dll
 *.pdb
 *.exe

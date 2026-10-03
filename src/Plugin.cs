@@ -72,7 +72,11 @@ namespace ScamWYF.AiBackend
     /// worth having when a reply is not what you expected and you cannot tell which of six settings
     /// you got wrong.
     /// </remarks>
-    [BepInPlugin(PluginGuid, "Scam WYF AI Backend", "1.0.0")]
+    // PluginBuildInfo.Version is a generated const, stamped by build.ps1 from this repository's git
+    // tag - see mod-lib's Version.ps1. It was a "1.0.0" literal, which was correct on the first
+    // release and wrong on every one after it, and was visible to players because the launcher's Mods
+    // tab reads this attribute back out of the dll.
+    [BepInPlugin(PluginGuid, "Scam WYF AI Backend", PluginBuildInfo.Version)]
     public sealed class Plugin : ScamMod
     {
         public const string PluginGuid = "com.community.scamwyf.aibackend";
