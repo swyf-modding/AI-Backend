@@ -65,6 +65,7 @@ namespace ScamWYF.AiBackend
 
             ApplyTokenLimit(body, cfg);
             ApplySampling(body, cfg);
+            ApplyReasoning(body, cfg);
 
             body.Remove("response_format");
             if (schema != null)
@@ -106,6 +107,7 @@ namespace ScamWYF.AiBackend
                 ["messages"] = messages,
                 ["stream"] = false
             };
+            ApplyOllamaThinking(body, cfg);
             if (options.Count > 0) body["options"] = options;
 
             if (schema != null)
@@ -149,6 +151,46 @@ namespace ScamWYF.AiBackend
             if (cfg.TopPOverride.Value >= 0f) body["top_p"] = cfg.TopPOverride.Value;
         }
 
+        /// <summary>
+        /// Ask for less thinking, which is what this game needs: the caller turns are 128 tokens and
+        /// a model given free rein spends all of them thinking and then answers with nothing.
+        /// </summary>
+        /// <remarks>
+        /// Sends a top-level reasoning_effort string, which is what gpt-5 and OpenRouter take.
+        /// ServerDefault sends no field at all and lets the server apply its own default.
+        /// </remarks>
+        private static void ApplyReasoning(JObject body, Config cfg)
+        {
+            var effort = ReasoningEffort(cfg.Reasoning.Value);
+            if (effort == null) body.Remove("reasoning_effort");
+            else body["reasoning_effort"] = effort;
+        }
+
+        /// <summary>
+        /// Ollama has no effort levels, only a switch, so anything above Off is "think yes" and
+        /// ServerDefault leaves the field off entirely. Older Ollama builds ignore an unknown field.
+        /// </summary>
+        private static void ApplyOllamaThinking(JObject body, Config cfg)
+        {
+            var mode = cfg.Reasoning.Value;
+            if (mode == ReasoningMode.ServerDefault) return;
+            body["think"] = mode != ReasoningMode.Off;
+        }
+
+        /// <summary>The wire value for a reasoning level, or null to send no field at all.</summary>
+        private static string ReasoningEffort(ReasoningMode mode)
+        {
+            switch (mode)
+            {
+                case ReasoningMode.Off: return "none";
+                case ReasoningMode.Minimal: return "minimal";
+                case ReasoningMode.Low: return "low";
+                case ReasoningMode.Medium: return "medium";
+                case ReasoningMode.High: return "high";
+                default: return null;
+            }
+        }
+
         // ---------------------------------------------------------------- response
 
         /// <summary>
@@ -173,9 +215,9 @@ namespace ScamWYF.AiBackend
                     throw new InvalidOperationException(
                         "The model spent its entire token budget thinking and returned no reply " +
                         "(finish_reason \"length\"). Reasoning models need far more than the " +
-                        cfg.GameMaxTokens() + " the game asks for. Set MinMaxTokens in " +
-                        "BepInEx\\config\\com.community.scamwyf.aibackend.cfg to 2048 or more. " +
-                        "Reasoning so far: " + Truncate(ReadReasoning(raw), 400));
+                        cfg.GameMaxTokens() + " the game asks for. Either set Reasoning = Off, or set " +
+                        "MinMaxTokens in BepInEx\\config\\com.community.scamwyf.aibackend.cfg to 2048 " +
+                        "or more. Reasoning so far: " + Truncate(ReadReasoning(raw), 400));
 
                 throw new InvalidOperationException(
                     "The AI server's response had no assistant text. Body: " + Truncate(raw.ToString(Formatting.None), 600));

@@ -14,6 +14,25 @@ namespace ScamWYF.AiBackend
         OllamaNative
     }
 
+    /// <summary>
+    /// How hard the model is asked to think before it answers.
+    /// </summary>
+    public enum ReasoningMode
+    {
+        /// <summary>Ask for no thinking at all. The default: caller turns are 128 tokens.</summary>
+        Off,
+        /// <summary>Send no reasoning field and let the server apply its own default.</summary>
+        ServerDefault,
+        /// <summary>The smallest amount of thinking the server will do.</summary>
+        Minimal,
+        /// <summary>A little thinking.</summary>
+        Low,
+        /// <summary>The server's usual amount.</summary>
+        Medium,
+        /// <summary>As much thinking as it will do.</summary>
+        High
+    }
+
     public enum StructuredOutputMode
     {
         /// <summary>Pick a sensible default for the chosen backend mode.</summary>
@@ -51,6 +70,8 @@ namespace ScamWYF.AiBackend
         public readonly ConfigEntry<bool> KeepOpenRouterFields;
         public readonly ConfigEntry<string> MaxTokensFieldName;
         public readonly ConfigEntry<bool> StripThinkTags;
+
+        public readonly ConfigEntry<ReasoningMode> Reasoning;
 
         public Config(ConfigFile file)
         {
@@ -117,14 +138,27 @@ namespace ScamWYF.AiBackend
             MinMaxTokens = file.Bind("3 - Model", "MinMaxTokens", 0,
                 "Raise the token limit to at least this. 0 disables.\n" +
                 "The game asks for 128 tokens per caller turn, which is fine for an ordinary model but\n" +
-                "a reasoning model will spend all of it thinking and return nothing usable. With a\n" +
-                "thinking model set this to 1024 or more and leave StripThinkTags on.");
+                "a reasoning model will spend all of it thinking and return nothing usable. Leave\n" +
+                "Reasoning = Off unless you want thinking on purpose; if you do raise it, 1024 or more\n" +
+                "and leave StripThinkTags on.");
 
             TemperatureOverride = file.Bind("3 - Model", "TemperatureOverride", -1f,
                 "Replace temperature. Negative keeps the game's value, which is 0.9 for callers.");
 
             TopPOverride = file.Bind("3 - Model", "TopPOverride", -1f,
                 "Replace top_p. Negative keeps the game's value, which is 0.95 for callers.");
+
+            Reasoning = file.Bind("3 - Model", "Reasoning", ReasoningMode.Off,
+                "How hard the model should think before answering. Caller turns are 128 tokens and the\n" +
+                "game wants an answer fast, so the default is no thinking at all.\n" +
+                "Off           = reasoning_effort none. Cheapest and quickest, and the only setting\n" +
+                "                 that survives a small token budget.\n" +
+                "ServerDefault = send nothing; whatever the server does by default.\n" +
+                "Minimal / Low / Medium / High = reasoning_effort of that name.\n" +
+                "Anything above Off needs MinMaxTokens of 1024 or more, or the whole budget goes into\n" +
+                "thinking and the reply comes back empty.\n" +
+                "gpt-5 and older reject \"none\" with a 400; use ServerDefault or Minimal for those.\n" +
+                "Ollama native takes this as think = false / true, since it has no effort levels.");
 
             StructuredOutputs = file.Bind("4 - Compatibility", "StructuredOutputs", StructuredOutputMode.Auto,
                 "The game demands a strict JSON object back and discards the turn if it does not parse.\n" +

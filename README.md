@@ -64,9 +64,11 @@ OpenAI, OpenRouter, vLLM, Groq, or anything speaking the OpenAI chat-completions
 - No redistributed game DLLs, decompiled game source, telemetry, or credential collection
 
 > [!IMPORTANT]
-> The game asks for **128 max_tokens** per caller turn. A reasoning model spends all of it thinking and
-> returns nothing usable, so the game discards the turn and the caller says *"Sorry, what were you
-> saying"*. Set `MinMaxTokens = 2048` if you use one — see [Reasoning Models](#reasoning-models).
+> The game asks for **128 max_tokens** per caller turn, so a reasoning model spends all of it thinking
+> and returns nothing usable — the game discards the turn and the caller says *"Sorry, what were you
+> saying"*. `Reasoning = Off` (the default) sends `reasoning_effort: none`, which stops most of that.
+> If you deliberately want thinking, set `MinMaxTokens = 2048` too — see
+> [Reasoning Models](#reasoning-models).
 
 This project is not affiliated with or endorsed by the developers or publisher of Scam With Your Friends.
 
@@ -238,6 +240,8 @@ Model = llama3.1:8b            # required - the game asks for an OpenRouter mode
   Step down if replies keep failing validation.
 - **Thinking tags** — `<think>...</think>` is stripped, including an unclosed block left by a model that
   ran out of tokens.
+- **`reasoning_effort`** — set from `Reasoning`, which defaults to `none` because a caller turn has 128
+  tokens to spend and a model that thinks returns nothing. See [Reasoning Models](#reasoning-models).
 - **Response shape** — Ollama's native reply is converted back to OpenAI shape.
 
 ### Reasoning Models
@@ -247,16 +251,28 @@ returns nothing usable — `"content": null`, `"finish_reason": "length"` — so
 away:
 
 ```ini
-MinMaxTokens = 2048
+Reasoning = Off        # the default
+MinMaxTokens = 2048    # only needed if you raise Reasoning above Off
 StripThinkTags = true
 ```
 
-The log names this case explicitly rather than reporting a generic parse failure:
+`Reasoning` is the real fix, because it asks the model not to think rather than paying for the thinking:
+
+| Setting | Sent | Notes |
+|---|---|---|
+| `Off` *(default)* | `reasoning_effort: none` | No thinking. Cheapest and quickest. |
+| `ServerDefault` | *(nothing)* | The server's own default. Use for `gpt-5` and older, which reject `none` with a 400. |
+| `Minimal` … `High` | `reasoning_effort: <name>` | Needs `MinMaxTokens` of 1024 or more, or the budget goes into thinking and the reply comes back empty. |
+
+Ollama native has no effort levels, so it takes the same setting as `think: false` for `Off` and
+`think: true` for everything above it, and nothing at all for `ServerDefault`.
+
+The log names the starved-budget case explicitly rather than reporting a generic parse failure:
 
 ```text
 The model spent its entire token budget thinking and returned no reply (finish_reason "length").
-Reasoning models need far more than the token limit the game asks for. Set MinMaxTokens in
-BepInEx\config\com.community.scamwyf.aibackend.cfg to 2048 or more.
+Reasoning models need far more than the token limit the game asks for. Either set Reasoning = Off, or
+set MinMaxTokens in BepInEx\config\com.community.scamwyf.aibackend.cfg to 2048 or more.
 ```
 
 Models that reason in a `reasoning` or `reasoning_content` field rather than `<think>` tags need nothing
