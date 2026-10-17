@@ -13,9 +13,11 @@ namespace ScamWYF.AiBackend
     /// </summary>
     /// <remarks>
     /// The game polls its own backend for how many AI credits are left and prints whatever it is told,
-    /// whether or not anything is answering. With a custom backend those credits mean nothing and the
-    /// popup is an advert for a service this mod is not using, so both are replaced: the status line
-    /// names the custom backend, and the popup names the endpoint, model and provider actually in play.
+    /// whether or not anything is answering. With a custom backend those credits mean nothing and both
+    /// the status line and the popup are adverts for a service this mod is not using, so both are
+    /// replaced: the status line names the custom backend, and the popup names the endpoint, model and
+    /// provider actually in play. The purple membership badge, which in the full game always reads
+    /// "Unlimited", carries the model instead.
     ///
     /// This reads the config on every refresh rather than caching it at load, so it keeps telling the
     /// truth after a hot reload. The game's Refresh runs twice a second for as long as the menu is up,
@@ -35,8 +37,11 @@ namespace ScamWYF.AiBackend
         private static ManualLogSource log;
 
         private static FieldInfo backendLabel;
+        private static FieldInfo warning;
         private static FieldInfo warningTitle;
         private static FieldInfo warningBody;
+        private static FieldInfo panel;
+        private static FieldInfo unlimitedRole;
         private static MethodInfo setStatusColor;
         private static bool installed;
         private static bool reportedFailure;
@@ -67,8 +72,11 @@ namespace ScamWYF.AiBackend
             }
 
             backendLabel = AccessTools.Field(type, "backendLabel");
+            warning = AccessTools.Field(type, "warning");
             warningTitle = AccessTools.Field(type, "warningTitle");
             warningBody = AccessTools.Field(type, "warningBody");
+            panel = AccessTools.Field(type, "panel");
+            unlimitedRole = AccessTools.Field(type, "unlimitedRole");
             setStatusColor = AccessTools.Method(type, "SetStatusColor", ColorSignature);
 
             if (backendLabel == null)
@@ -107,11 +115,15 @@ namespace ScamWYF.AiBackend
         }
 
         /// <summary>
-        /// Runs after the game has filled the labels in. Overwrites the status line every time, and the
-        /// popup when it is one of the two the hosted AI service raises: out of credits, or usage
-        /// temporarily limited. The full release added the second of those; both are about a service
-        /// this mod has replaced.
+        /// Runs after the game has filled the labels in. Rewrites the status line every time, puts the
+        /// model on the membership badge, and shows the popup: replacing the two warnings the hosted AI
+        /// service raises - out of credits, or usage temporarily limited - and raising it on its own
+        /// when the game would show no warning at all.
         /// </summary>
+        /// <remarks>
+        /// The full game's AI is unlimited, so the credits warning never fires and, without that last
+        /// case, the notice would never appear.
+        /// </remarks>
         private static void RefreshPostfix(object __instance, bool aiCreditsDepleted, bool aiUsageRestricted)
         {
             if (!installed || cfg == null) return;
@@ -132,15 +144,26 @@ namespace ScamWYF.AiBackend
                     }
                 }
 
-                // Anything else the menu warns about - Steam offline, sign-in failed, the PC clock -
-                // is still true of the game, so leave it alone. Only the two about the hosted AI
-                // service are replaced: neither applies when the calls go somewhere else.
-                if (!aiCreditsDepleted && !aiUsageRestricted) return;
+                // The membership badge is purple and, in the full game, always reads "Unlimited" -
+                // which says nothing about what is answering, so the model goes there instead.
+                var role = unlimitedRole != null ? unlimitedRole.GetValue(__instance) as Label : null;
+                if (role != null) role.text = ModelLabel();
 
-                var title = warningTitle != null ? warningTitle.GetValue(__instance) as Label : null;
-                var body = warningBody != null ? warningBody.GetValue(__instance) as Label : null;
-                if (body != null) body.text = Describe();
-                if (title != null) title.text = "CUSTOM BACKEND";
+                // The two warnings the hosted AI service raises are about a service this mod does not
+                // use, so they are replaced. Anything else the menu warns about - Steam offline, sign-in
+                // failed, the PC clock - is still true of the game, so it is left alone.
+                if (aiCreditsDepleted || aiUsageRestricted)
+                {
+                    ShowWarning(__instance, "CUSTOM BACKEND", Describe());
+                    return;
+                }
+
+                var shown = warning != null ? warning.GetValue(__instance) as VisualElement : null;
+                if (shown != null && shown.style.display.value == DisplayStyle.Flex) return;
+
+                // Nothing is wrong and the game shows no popup, so the one that says where AI calls go
+                // has to be raised here.
+                ShowWarning(__instance, "CUSTOM BACKEND", Describe());
             }
             catch (Exception ex)
             {
@@ -148,6 +171,26 @@ namespace ScamWYF.AiBackend
                 reportedFailure = true;
                 if (log != null) log.LogError("Could not rewrite the AI status readout: " + ex.Message);
             }
+        }
+
+        /// <summary>
+        /// Puts the notice in the menu's warning panel. The label text alone is not enough: the game
+        /// hides the panel and drops its styling class whenever it has nothing to warn about, so both
+        /// are restored here.
+        /// </summary>
+        private static void ShowWarning(object instance, string title, string body)
+        {
+            var titleLabel = warningTitle != null ? warningTitle.GetValue(instance) as Label : null;
+            if (titleLabel != null) titleLabel.text = title;
+
+            var bodyLabel = warningBody != null ? warningBody.GetValue(instance) as Label : null;
+            if (bodyLabel != null) bodyLabel.text = body;
+
+            var warningElement = warning != null ? warning.GetValue(instance) as VisualElement : null;
+            if (warningElement != null) warningElement.style.display = DisplayStyle.Flex;
+
+            var panelElement = panel != null ? panel.GetValue(instance) as VisualElement : null;
+            if (panelElement != null) panelElement.EnableInClassList("connection-status--warning", true);
         }
 
         // ---------------------------------------------------------------- text
@@ -164,6 +207,17 @@ namespace ScamWYF.AiBackend
                 "AI calls are going to {0} ({1}) using model '{2}'.",
                 DescribeProvider(cfg), endpoint, model) +
                 " This is not the game's hosted backend, so its AI credits do not apply here.";
+        }
+
+        /// <summary>
+        /// The model in play, for the membership badge. Prefixed so the badge still reads as a label
+        /// rather than a value that happens to be sitting where a membership role was.
+        /// </summary>
+        private static string ModelLabel()
+        {
+            var model = Trim(Safe(() => cfg.Model.Value));
+            if (model.Length == 0) model = "the game's choice";
+            return "MODEL: " + model;
         }
 
         /// <summary>

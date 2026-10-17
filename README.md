@@ -371,9 +371,11 @@ fix, rather than a mod that stops working every launch.
 The main menu asks the hosted backend how many AI credits are left and prints whatever it is told,
 whether or not anything is answering. With a custom backend those credits mean nothing, so the mod
 rewrites that readout: the **AI status** line reads `AI BACKEND: CUSTOM BACKEND` in the healthy colour,
-and the **credits-depleted popup** is replaced with the endpoint, model and provider actually in use.
-Everything else the menu warns about — Steam offline, sign-in failed — is still true of the game, so it
-is left alone.
+the purple **membership badge** — which the full game otherwise leaves reading `Unlimited` — is given the
+model in play, and the popup names the endpoint, model and provider actually in use. The full game's AI
+is unlimited, so its credits warning never fires on its own; the mod raises that popup itself when there
+is nothing else to warn about. Everything else the menu warns about — Steam offline, sign-in failed, a
+ban, the PC clock — is still true of the game, so it is left alone.
 
 ---
 
@@ -413,7 +415,7 @@ src/
 |-- Translator.cs      Request and response rewriting: schema handling, thinking tags, Ollama's native shape
 |-- PromptBundle.cs    Answers the game's prompt-resolution request, which is not a completion
 |-- BossReview.cs      Raises the deadline the game puts on the end-of-day review
-|-- MenuStatus.cs      The main menu's AI status line and popup
+|-- MenuStatus.cs      The main menu's AI status line, membership badge and popup
 build.ps1              Wraps the shared library's build script
 vendor/                The shared library, as a submodule
 ```
