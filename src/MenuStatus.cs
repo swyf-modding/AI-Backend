@@ -108,9 +108,11 @@ namespace ScamWYF.AiBackend
 
         /// <summary>
         /// Runs after the game has filled the labels in. Overwrites the status line every time, and the
-        /// popup only when the popup is the credits-depleted one.
+        /// popup when it is one of the two the hosted AI service raises: out of credits, or usage
+        /// temporarily limited. The full release added the second of those; both are about a service
+        /// this mod has replaced.
         /// </summary>
-        private static void RefreshPostfix(object __instance, bool aiCreditsDepleted)
+        private static void RefreshPostfix(object __instance, bool aiCreditsDepleted, bool aiUsageRestricted)
         {
             if (!installed || cfg == null) return;
 
@@ -130,10 +132,10 @@ namespace ScamWYF.AiBackend
                     }
                 }
 
-                // Anything else the menu warns about - Steam offline, sign-in failed - is still true of
-                // the game, so leave it alone. Only the credits notice is about a service this mod has
-                // replaced.
-                if (!aiCreditsDepleted) return;
+                // Anything else the menu warns about - Steam offline, sign-in failed, the PC clock -
+                // is still true of the game, so leave it alone. Only the two about the hosted AI
+                // service are replaced: neither applies when the calls go somewhere else.
+                if (!aiCreditsDepleted && !aiUsageRestricted) return;
 
                 var title = warningTitle != null ? warningTitle.GetValue(__instance) as Label : null;
                 var body = warningBody != null ? warningBody.GetValue(__instance) as Label : null;

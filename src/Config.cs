@@ -63,6 +63,7 @@ namespace ScamWYF.AiBackend
         public readonly ConfigEntry<string> ProviderName;
         public readonly ConfigEntry<int> MaxTokensOverride;
         public readonly ConfigEntry<int> MinMaxTokens;
+        public readonly ConfigEntry<int> LongFormMinTokens;
         public readonly ConfigEntry<float> TemperatureOverride;
         public readonly ConfigEntry<float> TopPOverride;
 
@@ -72,6 +73,8 @@ namespace ScamWYF.AiBackend
         public readonly ConfigEntry<bool> StripThinkTags;
 
         public readonly ConfigEntry<ReasoningMode> Reasoning;
+
+        public readonly ConfigEntry<int> BossReviewTimeoutSeconds;
 
         public Config(ConfigFile file)
         {
@@ -140,7 +143,15 @@ namespace ScamWYF.AiBackend
                 "The game asks for 128 tokens per caller turn, which is fine for an ordinary model but\n" +
                 "a reasoning model will spend all of it thinking and return nothing usable. Leave\n" +
                 "Reasoning = Off unless you want thinking on purpose; if you do raise it, 1024 or more\n" +
-                "and leave StripThinkTags on.");
+                "and leave StripThinkTags on.\n" +
+                "This is a rescue for tiny budgets, so LongFormMinTokens exempts requests the game\n" +
+                "already made long - the boss review among them.");
+
+            LongFormMinTokens = file.Bind("3 - Model", "LongFormMinTokens", 1024,
+                "Requests the game already made at least this long are left alone by MinMaxTokens.\n" +
+                "The boss review asks for 2400 tokens and has a deadline to finish inside, so raising\n" +
+                "its budget to MinMaxTokens is the surest way to make it time out. 0 exempts nothing,\n" +
+                "which puts every request back under MinMaxTokens.");
 
             TemperatureOverride = file.Bind("3 - Model", "TemperatureOverride", -1f,
                 "Replace temperature. Negative keeps the game's value, which is 0.9 for callers.");
@@ -159,6 +170,15 @@ namespace ScamWYF.AiBackend
                 "thinking and the reply comes back empty.\n" +
                 "gpt-5 and older reject \"none\" with a 400; use ServerDefault or Minimal for those.\n" +
                 "Ollama native takes this as think = false / true, since it has no effort levels.");
+
+            BossReviewTimeoutSeconds = file.Bind("2 - Endpoint", "BossReviewTimeoutSeconds", 120,
+                "Seconds the end-of-day boss review is allowed to take. 0 leaves the game at its own\n" +
+                "30, which is not enough for a long review on a remote server.\n" +
+                "The game enforces this itself, with a timer it starts before the request and does not\n" +
+                "wait past: at 30s it gives up, throws the request away and carries on with the day's\n" +
+                "results. Raising TimeoutSeconds does not help, because the game stops waiting first.\n" +
+                "Also raise LongFormMinTokens rather than MinMaxTokens, so the review keeps the 2400\n" +
+                "tokens the game asked for instead of being inflated to a budget it cannot reach.");
 
             StructuredOutputs = file.Bind("4 - Compatibility", "StructuredOutputs", StructuredOutputMode.Auto,
                 "The game demands a strict JSON object back and discards the turn if it does not parse.\n" +
@@ -203,6 +223,8 @@ namespace ScamWYF.AiBackend
             Clamp(MaxAttempts, settings.Int(MaxAttempts, 1, 10));
             Clamp(MaxTokensOverride, settings.Int(MaxTokensOverride, 0, 1000000));
             Clamp(MinMaxTokens, settings.Int(MinMaxTokens, 0, 1000000));
+            Clamp(LongFormMinTokens, settings.Int(LongFormMinTokens, 0, 1000000));
+            Clamp(BossReviewTimeoutSeconds, settings.Int(BossReviewTimeoutSeconds, 0, 600));
 
             // A temperature or top_p left negative means "use the game's value", so those are bounds,
             // not clamps - there is nothing to correct.
@@ -234,12 +256,15 @@ namespace ScamWYF.AiBackend
             if (log == null) return;
 
             log.LogInfo(string.Format(
-                "In effect: mode {0}, endpoint {1}, model '{2}', timeout {3}s, {4} attempt(s).",
+                "In effect: mode {0}, endpoint {1}, model '{2}', timeout {3}s, {4} attempt(s), " +
+                "reasoning {5}, boss review {6}.",
                 Mode.Value,
                 string.IsNullOrEmpty(BaseUrl.Value.Trim()) ? "<not set>" : BaseUrl.Value.Trim(),
                 string.IsNullOrEmpty(Model.Value.Trim()) ? "<whatever the game asks for>" : Model.Value.Trim(),
                 TimeoutSeconds.Value,
-                MaxAttempts.Value));
+                MaxAttempts.Value,
+                Reasoning.Value,
+                BossReviewTimeoutSeconds.Value > 0 ? BossReviewTimeoutSeconds.Value + "s" : "the game's own 30s"));
         }
 
         /// <summary>

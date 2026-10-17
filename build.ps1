@@ -32,28 +32,46 @@ if (-not (Test-Path $lib)) {
     throw "The shared library is missing. Run: git submodule update --init --recursive"
 }
 
-# The library finds the game install itself; ask it where that is so the extra references
-# below can be pointed at the same place.
+# The library finds the game install itself; find it here too so the extra references below can be
+# pointed at the same place.
+#
+# Every Steam library is searched, not just the one Steam itself lives in: the release is installed
+# to a library on another drive here. Only the full release counts - a leftover Playtest install is
+# ignored - and the two live under different folder names, so the release is matched by name rather
+# than by whichever library Steam happened to list first.
 $managed = $null
-if ($GameDir) {
-    $managed = Join-Path $GameDir 'Scam With Your Friends_Data\Managed'
-} else {
-    foreach ($root in @(
-        "${env:ProgramFiles(x86)}\Steam\steamapps\common",
-        "${env:ProgramFiles}\Steam\steamapps\common",
-        "${env:HOME}\.local\share\Steam\steamapps\common",
-        "${env:HOME}\.steam\steam\steamapps\common")) {
-        foreach ($name in @('Scam With Your Friends', 'Scam With Your Friends Playtest')) {
+if (-not $GameDir) { $GameDir = $env:SWYG_GAME_DIR }
+if (-not $GameDir) {
+    $roots = @()
+    foreach ($steam in @("${env:ProgramFiles(x86)}\Steam", "${env:ProgramFiles}\Steam",
+                         "${env:LOCALAPPDATA}\Steam")) {
+        if (-not $steam) { continue }
+        $roots += (Join-Path $steam 'steamapps\common')
+
+        $vdf = Join-Path $steam 'steamapps\libraryfolders.vdf'
+        if (-not (Test-Path $vdf)) { continue }
+        try {
+            $text = Get-Content $vdf -Raw
+            foreach ($m in [regex]::Matches($text, '"path"\s+"([^"]+)"')) {
+                $roots += (Join-Path ($m.Groups[1].Value -replace '\\\\', '\') 'steamapps\common')
+            }
+        } catch { }
+    }
+    $roots += @('C:\Program Files (x86)\Steam\steamapps\common', 'D:\SteamLibrary\steamapps\common')
+    $roots = $roots | Where-Object { $_ } | Select-Object -Unique
+
+    foreach ($name in @('Scam With Your Friends')) {
+        foreach ($root in $roots) {
             $candidate = Join-Path $root $name
             if (Test-Path (Join-Path $candidate 'Scam With Your Friends_Data\Managed\mscorlib.dll')) {
                 $GameDir = $candidate
-                $managed = Join-Path $candidate 'Scam With Your Friends_Data\Managed'
                 break
             }
         }
-        if ($managed) { break }
+        if ($GameDir) { break }
     }
 }
+if ($GameDir) { $managed = Join-Path $GameDir 'Scam With Your Friends_Data\Managed' }
 
 if (-not $managed) {
     throw "Could not find the game install. Pass -GameDir, or set SWYG_GAME_DIR."
@@ -71,6 +89,7 @@ $buildArgs = @{
     Refs    = @(
         (Join-Path $managed 'UnityEngine.UnityWebRequestModule.dll')
         (Join-Path $managed 'UnityEngine.UIElementsModule.dll')
+        (Join-Path $managed 'Unity.InputSystem.dll')
         (Join-Path $managed 'Newtonsoft.Json.dll')
         (Join-Path $managed 'UniTask.dll')
         (Join-Path $managed 'Assembly-CSharp.dll')

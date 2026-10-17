@@ -8,6 +8,7 @@ using HarmonyLib;
 using Newtonsoft.Json.Linq;
 using ScamWYF.Modding.Core;
 using ScamWYF.Modding.Core.Ui;
+using UnityEngine.InputSystem;
 using UnityEngine.UIElements;
 
 namespace ScamWYF.AiBackend
@@ -96,6 +97,8 @@ namespace ScamWYF.AiBackend
 
         /// <summary>Counts for the menu tab. Cheap enough to read every frame, which is what it does.</summary>
         private static int _requests;
+        private static int _promptRequests;
+        private static bool _loggedPromptBundle;
         private static int _failures;
         private static string _lastError;
         private static string _lastOutcome;
@@ -114,6 +117,15 @@ namespace ScamWYF.AiBackend
             WatchConfig();
 
             ModMenu.AddPage(this, "AI Backend", BuildPage, -20);
+
+            // A request already on the wire cannot be reached through the game, which has no way to
+            // abandon a caller turn. This is the only way to stop one.
+            Hotkeys.Register(this, Key.F8, "Cancel in-flight AI requests",
+                    delegate
+                    {
+                        var stopped = AiRouter.CancelAll();
+                        if (stopped == 0) ModLog.LogInfo("Nothing to cancel; no request is waiting on the network.");
+                    });
 
             if (Cfg.Mode.Value == BackendMode.Passthrough)
             {
@@ -144,6 +156,10 @@ namespace ScamWYF.AiBackend
 
             // Only once the router is live: the menu must not advertise a backend that isn't there.
             MenuStatus.TryInstall(this, Cfg);
+
+            // The game gives the boss review 30 seconds and does not wait past it. Raise that before
+            // the whiteboard exists, so the deadline is already right when a review starts.
+            BossReview.TryInstall(this, Cfg);
         }
 
         protected override void OnConfigReloaded()
@@ -152,6 +168,10 @@ namespace ScamWYF.AiBackend
             // -1 has to become 1 before the request path ever sees it.
             Cfg.ApplyLimits(new ModSettings(base.Config, ModLog, ModId));
             Cfg.Describe(ModLog);
+
+            // The boss deadline is written onto the whiteboard when it wakes up, so a live board has to
+            // be told about the new value rather than waiting for the next scene.
+            BossReview.Reapply(Cfg, ModLog);
 
             // Mode is the one setting that decides whether the patch exists, so a change to it has to
             // be applied rather than picked up on the next request.
@@ -188,8 +208,46 @@ namespace ScamWYF.AiBackend
         /// <summary>
         /// Replaces the hosted proxy call.
         /// </summary>
+        /// <remarks>
+        /// Two kinds of request come through here and they are handled differently. The game's
+        /// prompt-resolution call - the one that asks for the bundle a conversation is frozen against -
+        /// is answered locally, because it is not a chat completion and no chat server can serve it.
+        /// Everything else is a completion, and goes to the router or to another mod's backend.
+        /// </remarks>
         private static bool CompletePrefix(JObject body, CancellationToken cancellationToken, ref UniTask<JObject> __result)
         {
+            // Before the router and before any registered backend: this request is the game talking to
+            // its own backend, not to a model, and a custom backend must not be asked to answer it.
+            if (PromptBundle.IsResolveRequest(body))
+            {
+                _promptRequests++;
+
+                JObject bundle;
+                if (PromptBundle.TryBuild(body, out bundle))
+                {
+                    if (!_loggedPromptBundle)
+                    {
+                        // Once, not per conversation: it is the same thing happening every time, and a
+                        // player only needs to be told once that their official prompts did not leave
+                        // the machine.
+                        _loggedPromptBundle = true;
+                        Log.LogInfo("The game asked its backend to resolve the official prompt version; " +
+                                    "answered from the game's own prompts, so nothing in this request went to your server.");
+                    }
+
+                    __result = UniTask.FromResult(bundle);
+                    _lastOutcome = "served the game's prompt request locally";
+                    return false;
+                }
+
+                // Nothing to build it from. The game's own backend is the only other thing that can
+                // resolve a prompt, so this one request runs the original method rather than failing.
+                _failures++;
+                _lastError = "Could not build the prompt bundle; left to the game's own backend.";
+                Log.LogWarning(_lastError);
+                return true;
+            }
+
             _requests++;
 
             try
@@ -261,13 +319,16 @@ namespace ScamWYF.AiBackend
                 Widgets.FieldRow(scroll, "Model", ModelOrGameDefault());
                 Widgets.FieldRow(scroll, "Provider", Provider());
                 Widgets.FieldRow(scroll, "Token limit", Cfg.GameMaxTokens());
+                Widgets.FieldRow(scroll, "Boss review deadline", BossDeadline());
             }
 
             Widgets.Spacer(scroll, 8f);
             Widgets.Heading(scroll, "This session");
 
             Widgets.FieldRow(scroll, "Requests", _requests.ToString());
+            Widgets.FieldRow(scroll, "Prompt bundles", _promptRequests.ToString());
             Widgets.FieldRow(scroll, "Failures", _failures.ToString());
+            Widgets.FieldRow(scroll, "Waiting on the network", AiRouter.Pending.ToString());
             if (!string.IsNullOrEmpty(_lastOutcome)) Widgets.FieldRow(scroll, "Last request", _lastOutcome);
             if (!string.IsNullOrEmpty(_lastError)) Widgets.Note(scroll, "Last error: " + _lastError, true, true);
 
@@ -279,6 +340,16 @@ namespace ScamWYF.AiBackend
             var row = Widgets.WrapRow(scroll);
             Widgets.DescribedButton(row, "Re-read config", "Reload the file now, discarding nothing",
                 delegate { ReloadConfig(); });
+
+            Widgets.DescribedButton(row, "Cancel in-flight", "F8. Abandons every request waiting on the " +
+                    "network; the game treats the turn as failed.",
+                delegate
+                {
+                    var stopped = AiRouter.CancelAll();
+                    ModLog.LogInfo(stopped == 0
+                        ? "Nothing to cancel; no request is waiting on the network."
+                        : "Cancelled " + stopped + " in-flight request(s) from the menu.");
+                });
 
             var extra = AiBackendApi.Snapshot();
             if (extra.Length > 0)
@@ -311,6 +382,19 @@ namespace ScamWYF.AiBackend
                 "is picked up within about half a second.");
 
             ConfigEditor.Build(body);
+        }
+
+        private static string BossDeadline()
+        {
+            try
+            {
+                var seconds = Cfg.BossReviewTimeoutSeconds.Value;
+                return seconds > 0 ? seconds + "s" : "the game's own 30s";
+            }
+            catch (Exception)
+            {
+                return "unreadable";
+            }
         }
 
         private static string SafeBaseUrl()

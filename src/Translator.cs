@@ -20,6 +20,38 @@ namespace ScamWYF.AiBackend
             @"\A\s*<\s*(think|thinking|reasoning)\s*>.*?(<\s*/\s*\1\s*>|\z)",
             RegexOptions.Singleline | RegexOptions.IgnoreCase);
 
+        /// <summary>
+        /// Body fields the game adds only for its own hosted backend, dropped before the request goes
+        /// anywhere else.
+        /// </summary>
+        /// <remarks>
+        /// Most arrive with the immutable-conversation protocol: a frozen prompt version, the response
+        /// schema as prose, gameplay ownership, and a diagnostics block. They are not chat-completion
+        /// parameters, so a strict server rejects the whole request for them. The set mirrors what the
+        /// game itself removes before calling OpenRouter directly, plus the prompt-resolution marker
+        /// and the two lobby/model identifiers.
+        /// </remarks>
+        private static readonly string[] GameInternalFields =
+        {
+            "ai_category",
+            "backend_prompt_length",
+            "conversation_protocol",
+            "conversation_diagnostics",
+            "gameplay_route",
+            "gameplay_player",
+            "gameplay_owner_revision",
+            "lobby_session_id",
+            "model_settings",
+            "models",
+            "prompt_appendix",
+            "prompt_revision",
+            "prompt_sources",
+            "prompt_version",
+            "resolve_prompt_version",
+            "route",
+            "schema_instruction"
+        };
+
         // ---------------------------------------------------------------- request
 
         public static JObject BuildRequest(JObject gameBody, Config cfg, out StructuredOutputMode effectiveMode)
@@ -52,7 +84,15 @@ namespace ScamWYF.AiBackend
             var body = (JObject)gameBody.DeepClone();
             body["messages"] = messages;
 
-            // "provider" and "session_id" are OpenRouter extensions. OpenAI 400s on unknown fields.
+            // The game's own backend fields. Not part of the chat-completions schema, and a strict
+            // server (OpenAI, some gateways) answers 400 for an unknown body field. The full release
+            // added most of them with its immutable-conversation protocol, and the game strips the
+            // same set itself before calling OpenRouter directly - so this is always right, whether
+            // the server is strict or not, and even when KeepOpenRouterFields is on.
+            foreach (var field in GameInternalFields) body.Remove(field);
+
+            // "provider" and "session_id" are OpenRouter extensions. They mean nothing to the game's
+            // backend but are the only two a non-OpenRouter server might still reject.
             if (!cfg.KeepOpenRouterFields.Value)
             {
                 body.Remove("provider");
@@ -140,8 +180,19 @@ namespace ScamWYF.AiBackend
         {
             var value = gameValue;
             if (cfg.MaxTokensOverride.Value > 0) value = cfg.MaxTokensOverride.Value;
-            if (cfg.MinMaxTokens.Value > 0 && (!value.HasValue || value.Value < cfg.MinMaxTokens.Value))
-                value = cfg.MinMaxTokens.Value;
+
+            // MinMaxTokens is a rescue for the 128-token caller turns, so it does not touch a request the
+            // game already made long. The boss review asks for 2400 against a deadline of 30 seconds, and
+            // inflating that to 8192 is the surest way to make it time out.
+            var floor = cfg.MinMaxTokens.Value;
+            if (cfg.LongFormMinTokens.Value > 0 &&
+                value.HasValue && value.Value >= cfg.LongFormMinTokens.Value)
+            {
+                return value;
+            }
+
+            if (floor > 0 && (!value.HasValue || value.Value < floor))
+                value = floor;
             return value;
         }
 
@@ -225,7 +276,9 @@ namespace ScamWYF.AiBackend
 
             if (cfg.StripThinkTags.Value) content = StripThinking(content);
 
-            return new JObject
+            var choice = raw["choices"] is JArray rawChoices && rawChoices.Count > 0 ? rawChoices[0] : null;
+
+            var response = new JObject
             {
                 ["id"] = (string)raw["id"] ?? Guid.NewGuid().ToString("D"),
                 ["object"] = "chat.completion",
@@ -235,7 +288,8 @@ namespace ScamWYF.AiBackend
                     new JObject
                     {
                         ["index"] = 0,
-                        ["finish_reason"] = (string)raw["finish_reason"] ?? "stop",
+                        // A plain OpenAI reply carries the finish reason on the choice, not the root.
+                        ["finish_reason"] = (string)choice?["finish_reason"] ?? (string)raw["finish_reason"] ?? "stop",
                         ["message"] = new JObject
                         {
                             ["role"] = "assistant",
@@ -244,6 +298,13 @@ namespace ScamWYF.AiBackend
                     }
                 }
             };
+
+            // The game reads prompt-token usage back out of the completion to decide when a frozen
+            // conversation has to compact and what to show in its diagnostics. Optional, and not every
+            // server reports it, but passing it through when it is there keeps those decisions right.
+            if (raw["usage"] is JObject usage) response["usage"] = usage.DeepClone();
+
+            return response;
         }
 
         private static string ReadContent(JObject raw)

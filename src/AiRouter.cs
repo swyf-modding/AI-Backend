@@ -1,5 +1,6 @@
 using System;
 using System.Collections;
+using System.Collections.Generic;
 using System.Text;
 using System.Threading;
 using BepInEx.Logging;
@@ -21,6 +22,50 @@ namespace ScamWYF.AiBackend
         private static AiRouter instance;
         private static Config cfg;
         private static ManualLogSource log;
+
+        /// <summary>
+        /// One entry per request currently on the wire. Held so a cancel key has something to abort:
+        /// the game gives a caller turn no way to be abandoned, and a request that will be thrown away
+        /// anyway is worth stopping rather than waiting out.
+        /// </summary>
+        private static readonly List<CancellationTokenSource> InFlight = new List<CancellationTokenSource>();
+
+        /// <summary>How many requests are waiting on the network right now.</summary>
+        public static int Pending
+        {
+            get { lock (InFlight) return InFlight.Count; }
+        }
+
+        /// <summary>
+        /// Abandon every request in progress. Returns how many were stopped.
+        /// </summary>
+        /// <remarks>
+        /// Each request's coroutine already watches a cancellation token, so cancelling here makes it
+        /// abort its own UnityWebRequest and fail its completion source - the same path the game takes
+        /// when it gives up, rather than a parallel one that could leak a socket.
+        /// </remarks>
+        public static int CancelAll()
+        {
+            CancellationTokenSource[] pending;
+            lock (InFlight)
+            {
+                pending = InFlight.ToArray();
+                InFlight.Clear();
+            }
+
+            foreach (var cts in pending)
+            {
+                // Cancel only. The coroutine that owns this source disposes it on its way out, and it
+                // still has to read the token to fail its completion source.
+                try { cts.Cancel(); }
+                catch (Exception ex) { if (log != null) log.LogWarning("Could not cancel a request: " + ex.Message); }
+            }
+
+            if (log != null && pending.Length > 0)
+                log.LogInfo("Cancelled " + pending.Length + " in-flight request(s) from the keyboard.");
+
+            return pending.Length;
+        }
 
         public static void Initialize(Config config, ManualLogSource logger)
         {
@@ -79,105 +124,117 @@ namespace ScamWYF.AiBackend
             var attempts = Math.Max(1, cfg.MaxAttempts.Value);
             Exception lastError = null;
 
-            for (int attempt = 0; attempt < attempts; attempt++)
+            // Linked so the game giving up and the player pressing the cancel key take the same path.
+            var cancel = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+            lock (InFlight) InFlight.Add(cancel);
+
+            try
             {
-                if (attempt > 0)
+                for (int attempt = 0; attempt < attempts; attempt++)
                 {
-                    var delay = Math.Min(8f, (float)Math.Pow(2, attempt - 1)) + UnityEngine.Random.Range(0f, 0.25f);
-                    if (cfg.Debug.Value) log.LogInfo(string.Format("retry {0}/{1} in {2:F1}s", attempt + 1, attempts, delay));
-
-                    var until = Time.realtimeSinceStartup + delay;
-                    while (Time.realtimeSinceStartup < until)
+                    if (attempt > 0)
                     {
-                        if (cancellationToken.IsCancellationRequested) { source.TrySetCanceled(cancellationToken); yield break; }
-                        yield return null;
+                        var delay = Math.Min(8f, (float)Math.Pow(2, attempt - 1)) + UnityEngine.Random.Range(0f, 0.25f);
+                        if (cfg.Debug.Value) log.LogInfo(string.Format("retry {0}/{1} in {2:F1}s", attempt + 1, attempts, delay));
+
+                        var until = Time.realtimeSinceStartup + delay;
+                        while (Time.realtimeSinceStartup < until)
+                        {
+                            if (cancel.IsCancellationRequested) { source.TrySetCanceled(cancel.Token); yield break; }
+                            yield return null;
+                        }
                     }
+
+                    if (cancel.IsCancellationRequested) { source.TrySetCanceled(cancel.Token); yield break; }
+
+                    var started = Time.realtimeSinceStartup;
+                    bool cancelled = false;
+                    bool retryable = false;
+                    JObject parsed = null;
+
+                    using (var request = new UnityWebRequest(url, "POST"))
+                    {
+                        request.uploadHandler = new UploadHandlerRaw(payload);
+                        request.downloadHandler = new DownloadHandlerBuffer();
+                        request.timeout = Math.Max(1, cfg.TimeoutSeconds.Value);
+                        request.SetRequestHeader("Content-Type", "application/json");
+                        request.SetRequestHeader("Accept", "application/json");
+
+                        var key = cfg.ApiKey.Value.Trim();
+                        if (key.Length > 0) request.SetRequestHeader("Authorization", "Bearer " + key);
+
+                        ApplyExtraHeaders(request);
+
+                        if (cfg.AllowInvalidCertificates.Value)
+                            request.certificateHandler = new AcceptAnyCertificate();
+
+                        var operation = request.SendWebRequest();
+                        while (!operation.isDone)
+                        {
+                            if (cancel.IsCancellationRequested)
+                            {
+                                request.Abort();
+                                cancelled = true;
+                                break;
+                            }
+                            yield return null;
+                        }
+
+                        if (!cancelled)
+                        {
+                            var elapsed = Time.realtimeSinceStartup - started;
+                            var status = request.responseCode;
+                            var text = request.downloadHandler != null ? request.downloadHandler.text : null;
+
+                            if (request.result == UnityWebRequest.Result.Success)
+                            {
+                                if (cfg.Debug.Value)
+                                {
+                                    log.LogInfo(string.Format("<- {0} in {1:F2}s", status, elapsed));
+                                    if (cfg.LogBodies.Value) log.LogInfo("response: " + Translator.Truncate(text, 8000));
+                                }
+
+                                try
+                                {
+                                    parsed = Translator.NormalizeResponse(JObject.Parse(text), cfg);
+                                }
+                                catch (Exception ex)
+                                {
+                                    lastError = ex;
+                                    log.LogWarning("Could not use the response: " + ex.Message);
+                                }
+                            }
+                            else
+                            {
+                                retryable = status == 0 || status == 408 || status == 429 || status >= 500;
+                                lastError = new InvalidOperationException(string.Format(
+                                    "{0} returned HTTP {1} ({2}) after {3:F2}s. Body: {4}",
+                                    url, status, request.error, elapsed, Translator.Truncate(text, 600)));
+                                log.LogWarning(lastError.Message);
+                            }
+                        }
+                    }
+
+                    if (cancelled) { source.TrySetCanceled(cancel.Token); yield break; }
+                    if (parsed != null)
+                    {
+                        Plugin.RecordSuccess(url);
+                        source.TrySetResult(parsed);
+                        yield break;
+                    }
+                    if (!retryable) break;
                 }
 
-                if (cancellationToken.IsCancellationRequested) { source.TrySetCanceled(cancellationToken); yield break; }
-
-                var started = Time.realtimeSinceStartup;
-                bool cancelled = false;
-                bool retryable = false;
-                JObject parsed = null;
-
-                using (var request = new UnityWebRequest(url, "POST"))
-                {
-                    request.uploadHandler = new UploadHandlerRaw(payload);
-                    request.downloadHandler = new DownloadHandlerBuffer();
-                    request.timeout = Math.Max(1, cfg.TimeoutSeconds.Value);
-                    request.SetRequestHeader("Content-Type", "application/json");
-                    request.SetRequestHeader("Accept", "application/json");
-
-                    var key = cfg.ApiKey.Value.Trim();
-                    if (key.Length > 0) request.SetRequestHeader("Authorization", "Bearer " + key);
-
-                    ApplyExtraHeaders(request);
-
-                    if (cfg.AllowInvalidCertificates.Value)
-                        request.certificateHandler = new AcceptAnyCertificate();
-
-                    var operation = request.SendWebRequest();
-                    while (!operation.isDone)
-                    {
-                        if (cancellationToken.IsCancellationRequested)
-                        {
-                            request.Abort();
-                            cancelled = true;
-                            break;
-                        }
-                        yield return null;
-                    }
-
-                    if (!cancelled)
-                    {
-                        var elapsed = Time.realtimeSinceStartup - started;
-                        var status = request.responseCode;
-                        var text = request.downloadHandler != null ? request.downloadHandler.text : null;
-
-                        if (request.result == UnityWebRequest.Result.Success)
-                        {
-                            if (cfg.Debug.Value)
-                            {
-                                log.LogInfo(string.Format("<- {0} in {1:F2}s", status, elapsed));
-                                if (cfg.LogBodies.Value) log.LogInfo("response: " + Translator.Truncate(text, 8000));
-                            }
-
-                            try
-                            {
-                                parsed = Translator.NormalizeResponse(JObject.Parse(text), cfg);
-                            }
-                            catch (Exception ex)
-                            {
-                                lastError = ex;
-                                log.LogWarning("Could not use the response: " + ex.Message);
-                            }
-                        }
-                        else
-                        {
-                            retryable = status == 0 || status == 408 || status == 429 || status >= 500;
-                            lastError = new InvalidOperationException(string.Format(
-                                "{0} returned HTTP {1} ({2}) after {3:F2}s. Body: {4}",
-                                url, status, request.error, elapsed, Translator.Truncate(text, 600)));
-                            log.LogWarning(lastError.Message);
-                        }
-                    }
-                }
-
-                if (cancelled) { source.TrySetCanceled(cancellationToken); yield break; }
-                if (parsed != null)
-                        {
-                            Plugin.RecordSuccess(url);
-                            source.TrySetResult(parsed);
-                            yield break;
-                        }
-                if (!retryable) break;
+                var failure = lastError ?? new InvalidOperationException(
+                    "The AI request failed and no error was recorded.");
+                Plugin.RecordFailure(failure.Message);
+                source.TrySetException(failure);
             }
-
-            var failure = lastError ?? new InvalidOperationException(
-                "The AI request failed and no error was recorded.");
-            Plugin.RecordFailure(failure.Message);
-            source.TrySetException(failure);
+            finally
+            {
+                lock (InFlight) InFlight.Remove(cancel);
+                cancel.Dispose();
+            }
         }
 
         private void ApplyExtraHeaders(UnityWebRequest request)

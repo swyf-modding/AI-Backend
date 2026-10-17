@@ -4,7 +4,7 @@
 
 ![license](https://img.shields.io/badge/license-MIT-blue)
 ![version](https://img.shields.io/github/v/release/swyf-modding/AI-Backend?label=version)
-![game build](https://img.shields.io/badge/game-v82--playtest-blue)
+![game build](https://img.shields.io/badge/game-0.1.71--swyf-blue)
 ![Unity](https://img.shields.io/badge/Unity-6000.3.10f1-blue)
 
 *Built with:*
@@ -33,6 +33,8 @@
   - [Supported Backends](#supported-backends)
   - [Request Rewrites](#request-rewrites)
   - [Reasoning Models](#reasoning-models)
+  - [The End-of-Day Boss Review](#the-end-of-day-boss-review)
+  - [Cancelling a Request](#cancelling-a-request)
 - [Extending](#extending)
 - [Project Structure](#project-structure)
 - [Continuous Builds](#continuous-builds)
@@ -171,7 +173,7 @@ No game DLL belongs in this repository or in a GitHub release.
 
 | Component | Verified Version |
 |---|---|
-| Scam With Your Friends | `v82-playtest` |
+| Scam With Your Friends | `0.1.71-swyf` |
 | Unity | `6000.3.10f1` |
 | BepInEx | `5.4.23.5`, Mono preloader |
 | ScamWYF.Modding.Core | built from the pinned submodule commit |
@@ -195,6 +197,27 @@ KolkataApi.CompleteOpenRouterAsync(JObject body, CancellationToken, bool backgro
 
 It takes an OpenAI-shaped chat-completion body and returns an OpenAI-shaped response. One Harmony prefix
 replaces it, so the whole game is covered by one hook and nothing else has to be touched.
+
+### The prompt request that is not a completion
+
+The full release reworked the AI path around an **immutable conversation**. Before a conversation's first
+turn — a caller turn, the customer-info read, a boss taunt or the end-of-day review — the game sends a
+second kind of request through the same method:
+
+```json
+{ "resolve_prompt_version": true, "ai_category": "dialogue", "response_format": { "...": "..." } }
+```
+
+It has **no messages**. The backend is expected to answer with the prompt bundle the conversation is then
+frozen against — `prompt_version`, `system_prompt`, `response_format` and `limits` — and a chat server
+cannot: there is nothing to complete. Left to the mod's router the turn fails with *"Invalid immutable
+prompt bundle"*, which is what a healthy release looks like when only the completion call is patched.
+
+So the mod answers it itself, out of the game's own packaged prompts (`GameplayPrompts`), which is the
+same text the game would have used had the host picked a model directly, and the same text the host's
+prompt overrides edit. Nothing in that request reaches your server, and it is counted separately as
+**Prompt bundles** on the settings tab. If the prompts cannot be read at all, that one request is left to
+the game's own backend rather than failing.
 
 The patch goes through the shared library's `PatchCoordinator`, which means that if another mod is
 already patching that method you are told, and if a game update moves it the log says what it expected
@@ -232,6 +255,12 @@ Model = llama3.1:8b            # required - the game asks for an OpenRouter mode
 ### Request Rewrites
 
 - **`model`** — replaced with yours, since the game sends `google/gemini-2.5-flash-lite`.
+- **The game's own backend fields** — dropped: `ai_category`, `backend_prompt_length`, `gameplay_route`,
+  `gameplay_player`, `gameplay_owner_revision`, `prompt_revision`, `prompt_version`, `prompt_appendix`,
+  `prompt_sources`, `schema_instruction`, `conversation_protocol`, `conversation_diagnostics`,
+  `model_settings` and the rest. They are not chat-completion parameters, and a strict server answers 400
+  for the whole request when it sees one. These are always removed; the game strips the same set itself
+  before it calls OpenRouter directly.
 - **`provider` and `session_id`** — dropped. OpenRouter extensions that OpenAI answers 400 for. Keep them
   with `KeepOpenRouterFields`.
 - **`response_format`** — the game sends a strict `json_schema` and *discards the turn* if the reply does
@@ -242,7 +271,8 @@ Model = llama3.1:8b            # required - the game asks for an OpenRouter mode
   ran out of tokens.
 - **`reasoning_effort`** — set from `Reasoning`, which defaults to `none` because a caller turn has 128
   tokens to spend and a model that thinks returns nothing. See [Reasoning Models](#reasoning-models).
-- **Response shape** — Ollama's native reply is converted back to OpenAI shape.
+- **Response shape** — Ollama's native reply is converted back to OpenAI shape, and a reported `usage`
+  block is passed through so the game's own conversation compaction stays accurate.
 
 ### Reasoning Models
 
@@ -278,6 +308,59 @@ set MinMaxTokens in BepInEx\config\com.community.scamwyf.aibackend.cfg to 2048 o
 Models that reason in a `reasoning` or `reasoning_content` field rather than `<think>` tags need nothing
 extra: the reply is built from `content` only, so reasoning never reaches the game. `MinMaxTokens` is a
 floor, not a replacement — it raises the game's 128 but leaves a higher `MaxTokensOverride` alone.
+
+### The End-of-Day Boss Review
+
+The boss review is not a caller turn, and it does not get caller treatment. It is a long piece of prose
+written against the whole day's summary, and the game handles it differently in two ways that matter:
+
+```csharp
+// ReviewBossAiClient - the budget it asks for, against a caller turn's 128
+instance.CreateConversation(BuildSystemPrompt(), model, 2400, 0.88f, 0.95f, 0);
+
+// ReviewWhiteboardController - and the deadline it has to finish inside
+[SerializeField] private float m_hostAiTimeoutSeconds = 30f;
+```
+
+That 30 seconds is **the game's own**, not this mod's. It starts a timer before the request, and when it
+expires it cancels, throws the review away and carries on with the day's results:
+
+```text
+[ReviewBossAiClient] Host OpenRouter review timed out.
+[ReviewWhiteboardController] Host AI review unavailable. Preserving the day's results and verdict with an AI error notice.
+```
+
+Two things follow, and both are counter-intuitive:
+
+- **`TimeoutSeconds` does not help.** It is this mod's timeout; the game's fires first and is the one that
+  decides. Raising it past 30 changes nothing.
+- **A bigger token budget makes it worse.** The review is long, so the obvious-looking fix is to raise its
+  ceiling — but it then has even further to run inside the same 30 seconds. `MinMaxTokens` is exactly that
+  trap: it exists to rescue the 128-token caller turns, and left alone it would inflate the review's 2400 to
+  whatever you set, which is the surest way to guarantee the timeout.
+
+So the two settings that matter are:
+
+```ini
+BossReviewTimeoutSeconds = 120    # how long the review is allowed; 0 leaves the game at 30
+LongFormMinTokens        = 1024   # requests already this long are exempt from MinMaxTokens
+```
+
+`LongFormMinTokens` is why the review keeps the 2400 tokens the game asked for while caller turns still get
+the floor. 2400 in 30 seconds is about 80 tokens per second, which a decent model on a decent connection
+reaches; 8192 in 30 seconds is 273, which almost nothing does.
+
+Both hot-reload. If the game ever renames that field, the mod says so in the log and leaves the deadline
+alone rather than guessing.
+
+### Cancelling a Request
+
+Nothing in the game will abandon a caller turn once it has asked for one — you wait for the timeout. **F8**
+abandons everything currently on the wire, and so does **Cancel in-flight** on the settings tab. The menu
+also shows how many requests are waiting.
+
+This is for the case where you would rather have a failed turn now than a good one in forty seconds. It
+does not make a turn succeed; it stops it being stuck.
 
 ### Validation and the Main Menu
 
@@ -326,8 +409,10 @@ src/
 |-- Plugin.cs          Load, patch installation, menu tab, reload handling.
 |                      Also IChatBackend and AiBackendApi, the surface other mods use
 |-- Config.cs          Bound settings, ranges, clamping
-|-- AiRouter.cs        The HTTP call itself: timeout, retry on 408/429/5xx, backoff
+|-- AiRouter.cs        The HTTP call itself: timeout, retry on 408/429/5xx, backoff, cancellation
 |-- Translator.cs      Request and response rewriting: schema handling, thinking tags, Ollama's native shape
+|-- PromptBundle.cs    Answers the game's prompt-resolution request, which is not a completion
+|-- BossReview.cs      Raises the deadline the game puts on the end-of-day review
 |-- MenuStatus.cs      The main menu's AI status line and popup
 build.ps1              Wraps the shared library's build script
 vendor/                The shared library, as a submodule
