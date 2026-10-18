@@ -12,6 +12,9 @@
 ![C#](https://img.shields.io/badge/C%23-512BD4?style=for-the-badge&logo=csharp&logoColor=white)
 ![Harmony](https://img.shields.io/badge/Harmony-51796aa?style=for-the-badge)
 ![BepInEx](https://img.shields.io/badge/BepInEx-5.4.23.5-14172c?style=for-the-badge)
+
+> ⚠️ Linux support is **very experimental** (part of the experimental Linux/Proton setup flow);
+> Windows remains the reference platform.
 ![Newtonsoft](https://img.shields.io/badge/Newtonsoft.Json-000000?style=for-the-badge)
 
 </div>
@@ -90,27 +93,31 @@ This project is not affiliated with or endorsed by the developers or publisher o
 ### Installation
 
 1. Install BepInEx and the corlib override with [Setup](https://github.com/swyf-modding/Setup).
-2. Copy `ScamWYF.AiBackend.dll` into `BepInEx\plugins`.
-3. Copy `ScamWYF.Modding.Core.dll` into `BepInEx\core`, if it is not already there.
+2. Copy `ScamWYF.AiBackend.dll` into `BepInEx/plugins`.
+3. Copy `ScamWYF.Modding.Core.dll` into `BepInEx/core`, if it is not already there.
 4. Launch the game once so BepInEx writes its config, then set `Model` and `BaseUrl` in
-   `BepInEx\config\com.community.scamwyf.aibackend.cfg` — or do both from the in-game tab.
+   `BepInEx/config/com.community.scamwyf.aibackend.cfg` — or do both from the in-game tab.
 
 ### Developer Setup
 
 ```powershell
 git clone --recurse-submodules https://github.com/swyf-modding/AI-Backend.git
 cd AI-Backend
-.\build.ps1                # build and install
-.\build.ps1 -NoCopy -Test  # build, run the tests, do not touch the game
+./build.ps1                # build and install
+./build.ps1 -NoCopy -Test  # build, run the tests, do not touch the game
 ```
 
-The library is a submodule, built to its own dll in `BepInEx\core` rather than compiled into this one.
+The library is a submodule, built to its own dll in `BepInEx/core` rather than compiled into this one.
 That is deliberate: the library owns the singletons — the hotkey table, the menu, the panel — so
 embedding it gave every mod a private copy, and F1 opened two windows. `build.ps1` builds the library
 first and compiles this mod against the dll it just produced, so the reference is never stale.
 
 Roslyn runs directly; no .NET SDK is needed to build. The game install is auto-detected, or set
 `SWYG_GAME_DIR`.
+
+On Linux and macOS the same commands run under `pwsh`, and a Proton install is found under the Steam
+libraries in `~/.steam` and `~/.local/share`. The mod is a Windows dll either way — it is loaded into
+the game's own process, which Proton is running.
 
 #### Versioning
 
@@ -148,7 +155,7 @@ log says which happened.
 ### Testing
 
 ```powershell
-.\build.ps1 -NoCopy -Test
+./build.ps1 -NoCopy -Test
 ```
 
 That compiles the mod against the library, then runs the library's API surface check and its behaviour
@@ -160,10 +167,13 @@ To verify a session headlessly, without the game taking over your screen:
 & "C:\...\Scam With Your Friends.exe" -batchmode -nographics
 ```
 
-BepInEx still initialises and writes `BepInEx\LogOutput.log`, so plugin loading and Harmony patching can
+BepInEx still initialises and writes `BepInEx/LogOutput.log`, so plugin loading and Harmony patching can
 be checked without a display. The router, the patch and hot config reload all work headlessly. `-batchmode`
 loads no scene, so UI Toolkit has no themed `PanelSettings` to clone and the in-game menu reports itself
 unavailable — only the interface needs a real window.
+
+On Linux the same `-batchmode -nographics` arguments work, as a Steam launch option or through
+`swyf-setup play`, and the log is in the same place inside the install.
 
 No game DLL belongs in this repository or in a GitHub release.
 
@@ -178,7 +188,7 @@ No game DLL belongs in this repository or in a GitHub release.
 | BepInEx | `5.4.23.5`, Mono preloader |
 | ScamWYF.Modding.Core | built from the pinned submodule commit |
 | C# language level | `7.3` |
-| Platform | Windows x64 |
+| Platform | Windows x64, including under Proton on Linux |
 
 The mod compiles with `-nostdlib+` against the game's own `mscorlib.dll`, so a call that managed
 stripping removed is a build error rather than a `MissingMethodException` in a session. Keep that flag:
@@ -227,7 +237,7 @@ and what this build actually has — instead of throwing.
 
 ## Configuration Reference
 
-`BepInEx\config\com.community.scamwyf.aibackend.cfg`, created on first launch:
+`BepInEx/config\com.community.scamwyf.aibackend.cfg`, created on first launch:
 
 ```ini
 [1 - General]
@@ -302,7 +312,7 @@ The log names the starved-budget case explicitly rather than reporting a generic
 ```text
 The model spent its entire token budget thinking and returned no reply (finish_reason "length").
 Reasoning models need far more than the token limit the game asks for. Either set Reasoning = Off, or
-set MinMaxTokens in BepInEx\config\com.community.scamwyf.aibackend.cfg to 2048 or more.
+set MinMaxTokens in BepInEx/config\com.community.scamwyf.aibackend.cfg to 2048 or more.
 ```
 
 Models that reason in a `reasoning` or `reasoning_content` field rather than `<think>` tags need nothing
@@ -463,7 +473,7 @@ Releases are published by hand; see [RELEASING.md](RELEASING.md).
 ## Security
 
 Please do not publish suspected vulnerabilities or private game data in a public issue, and do not paste
-`BepInEx\LogOutput.log` contents in public: **this mod logs your configured endpoint and model, and the
+`BepInEx/LogOutput.log` contents in public: **this mod logs your configured endpoint and model, and the
 `ApiKey` is in your `.cfg`.** Share a redacted log if you need to report a problem.
 
 ---
