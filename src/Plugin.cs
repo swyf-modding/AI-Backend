@@ -75,7 +75,7 @@ namespace ScamWYF.AiBackend
     /// </remarks>
 // PluginBuildInfo.Version is a generated const, stamped by build.ps1 from this repository's git
     // tag - see mod-lib's Version.ps1. It was a "1.0.0" literal, which was correct on the first release
-    // and silently wrong on every one after it, and was visible to players because the launcher's Mods
+    // and silently wrong on every one after it, and was visible to players because Switchboard's Mods
     // tab reads the attribute back out of the dll.
     //
     // It must stay parseable by System.Version: two to four dot-separated integers and nothing else.

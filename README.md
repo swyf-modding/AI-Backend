@@ -127,11 +127,11 @@ the game's own process, which Proton is running.
 |---|---|
 | `AssemblyVersion` | `1.2.3` — numeric, because the CLR rejects a prerelease here |
 | `AssemblyInformationalVersion` | `1.2.3+g0a1b2c3` — what Explorer shows |
-| `[BepInPlugin]` version | the same string, which is what the launcher's Mods tab reads |
+| `[BepInPlugin]` version | the same string, which is what Switchboard's Mods tab reads |
 
 That last row is why it is generated rather than typed. It used to be a `"1.0.0"` literal in the
 source: correct on the first release, silently wrong on every release after it, and shown to players
-by the launcher's Mods tab. It is a `const` because `[BepInPlugin]`'s arguments must be compile-time
+by Switchboard's Mods tab. It is a `const` because `[BepInPlugin]`'s arguments must be compile-time
 constants. See [`Version.ps1`](https://github.com/swyf-modding/mod-lib/blob/main/Version.ps1), which
 the mod's `build.ps1` and the library share.
 
@@ -493,5 +493,5 @@ submodule.
 |---|---|
 | [mod-lib](https://github.com/swyf-modding/mod-lib) | Shared library: base class, menu, config editor, hot reload, patch coordinator |
 | [Setup](https://github.com/swyf-modding/Setup) | Installs BepInEx, the corlib override, and the vtable patches this game needs |
-| [Launcher](https://github.com/swyf-modding/Launcher) | Installs, launches, and manages mods from outside the game |
+| [Switchboard](https://github.com/swyf-modding/Switchboard) | Installs, launches, and manages mods from outside the game |
 | [Mod-Handler](https://github.com/swyf-modding/Mod-Handler) | The in-game **Plugins** tab — turn mods off without leaving a session |

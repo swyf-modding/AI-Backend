@@ -6,7 +6,7 @@ How a release is cut across these five repositories, with the `gh` CLI.
 
 | Repository | Has releases? | Why |
 |---|---|---|
-| **Launcher** | yes, automated | Builds on a hosted runner — no game needed. Tag it and CI publishes. |
+| **Switchboard** | yes, automated | Builds on a hosted runner — no game needed. Tag it and CI publishes. |
 | **Mod-Handler** | yes, manual | Compiles against the game's own assemblies, so it builds only on a machine that has the game. |
 | **AI-Backend** | yes, manual | Same. |
 | **mod-lib** | no | A library, not something anyone installs. It has tags, because the mods resolve their versions from *their own* repo, but no release artefacts. |
@@ -28,12 +28,12 @@ Publishing a mod before `mod-lib` is on the remote gives you a repo whose `build
 `The term 'Version.ps1' is not recognized as the name of a cmdlet` — which does not obviously mean
 "bump your submodule".
 
-## Cutting a Launcher release
+## Cutting a Switchboard release
 
 Completely automated. From a clean tree:
 
 ```powershell
-cd Launcher
+cd Switchboard
 .\build.ps1                        # what CI will do; catch it before the tag
 .\tools\test-getmods.ps1          # the offline assertions
 git tag v1.2.3
@@ -41,11 +41,11 @@ git push origin v1.2.3
 ```
 
 `release.yml` then builds the tagged commit on a hosted runner and publishes
-`ScamWYF.Launcher-v1.2.3.zip`. Watch it with:
+`Switchboard` (Linux) and `Switchboard.exe` (Windows) — one self-contained file each. Watch it with:
 
 ```powershell
-gh run watch --repo swyf-modding/Launcher
-gh release view v1.2.3 --repo swyf-modding/Launcher
+gh run watch --repo swyf-modding/Switchboard
+gh release view v1.2.3 --repo swyf-modding/Switchboard
 ```
 
 Three gates stand between the tag and the published binary, because a wrong version in a release is
@@ -61,7 +61,7 @@ uploading a binary by hand.
 To check a tag exists and points where you expect before pushing it:
 
 ```powershell
-gh api repos/swyf-modding/Launcher/git/ref/tags/v1.2.3
+gh api repos/swyf-modding/Switchboard/git/ref/tags/v1.2.3
 ```
 
 ## Cutting a mod release
